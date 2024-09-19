@@ -1,5 +1,19 @@
-from typing import Dict, Union, Any
+"""
+Copyright (c) Nolichucky Associates 2024. All Rights Reserved.
 
+This software is the confidential and proprietary information of Nolichucky Associates.
+You shall not disclose such Confidential Information and shall use it only in accordance
+ with the terms of the license agreement you entered into with Nolichucky Associates.
+
+Unauthorized copying of this file, via any medium, is strictly prohibited.
+Proprietary and confidential.
+
+Project: Music Worcester Patron and Event Analytics
+
+Author: Anthony Smith
+Date: September, 2024
+"""
+from typing import Dict, Union, Any
 import pandas as pd
 import numpy as np
 import os
@@ -9,64 +23,12 @@ from timeit import default_timer as timer
 import logging
 import sys
 import hashlib
-
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 import requests
 from requests.exceptions import RequestException
 
-def safe_divide(x, y):
-    with np.errstate(divide='ignore', invalid='ignore'):
-        result = np.divide(x, y)
-        result[~np.isfinite(result)] = 0  # Set NaN, inf, -inf to 0
-    return result
-
-"""
-Function: generate_identifier
-
-Description:
-    This function generates a unique identifier for a given account name by applying the SHA-256 hash function. 
-    The result is a secure, consistent, and unique string (hash) that can be used as an anonymous identifier for each account.
-
-Parameters:
-    account_name (str): The account name (string) for which the unique identifier will be generated.
-
-Process:
-    1. Encodes the account name into bytes.
-    2. Applies the SHA-256 hash function to the encoded account name.
-    3. Returns the resulting hash as a hexadecimal string.
-
-Returns:
-    str: A unique SHA-256 hash string for the provided account name.
-"""
-def generate_identifier(account_name):
-    # Use SHA-256 hash function
-    return hashlib.sha256(account_name.encode()).hexdigest()
-
-"""
-Function: load_event_manifest
-
-Description:
-    This function loads and processes an event manifest file from an Excel sheet. 
-    It performs initial cleaning, such as removing test events, fixing date formats, filling missing values, 
-    and sorting the events by date, name, and instance. The function prepares the event data for further analysis 
-    and logs the process along with execution time.
-
-Parameters:
-    manifest_file (str): The file path to the event manifest Excel file.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. **Load the Event Manifest**: Loads the event manifest data from the specified Excel file.
-    2. **Remove Test Events**: Filters out any rows where 'EventName' contains variations of the word "test" (case-insensitive).
-    3. **Fix Dates**: Converts the 'EventDate' column to a simple date format.
-    4. **Fill Missing Values**: Fills missing values in the columns 'EventGenre', 'EventClass', 'EventStatus', 'EventSubGenre', and 'EventVenue' with the placeholder 'None', and fills missing 'EventCapacity' values with 1.
-    5. **Sort the Data**: Sorts the DataFrame by 'EventDate', 'EventName', and 'EventInstance' in descending order.
-    6. **Logging and Execution Time**: Logs the shape of the DataFrame and records the execution time.
-
-Returns:
-    pd.DataFrame: The cleaned and processed DataFrame containing event data.
-"""
+# Processing functions
 def load_event_manifest(manifest_file, logger):
     start = timer()
 
@@ -94,7 +56,6 @@ def load_event_manifest(manifest_file, logger):
     logger.info(f'Events loaded. Execution Time: {formatted_timing}')
 
     return event_df
-
 """
 Function: add_PnL_data
 
@@ -126,10 +87,7 @@ Process:
 Returns:
     pd.DataFrame: The original event DataFrame (unmodified), though the processed PnL data is saved to the specified CSV file.
 """
-def add_PnL_data(event_df,
-                 Pnl_file,
-                 PnLProcessed_file,
-                 logger):
+def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
     start = timer()
 
     PnL_df = pd.read_excel(Pnl_file,sheet_name='PnLSourceData')
@@ -193,7 +151,6 @@ def add_PnL_data(event_df,
     logger.info(f'PnL data written to {PnLProcessed_file}. Execution Time: {formatted_timing}')
 
     return event_df
-
 """
 Function: load_sales_file
 
@@ -215,9 +172,7 @@ Process:
 Returns:
     pd.DataFrame: The processed DataFrame containing the sales data with renamed columns and only recent records.
 """
-def load_sales_file(sales_file,
-                    yearsOfData,
-                    logger):
+def load_sales_file(sales_file, yearsOfData, logger):
     start = timer()
 
     # load sales file and fix column names
@@ -293,7 +248,6 @@ def load_sales_file(sales_file,
 
     logger.debug(sales_df.shape)
     return sales_df
-
 """
 Function: sales_initial_prep
 
@@ -323,9 +277,7 @@ Process:
 Returns:
     pd.DataFrame: The cleaned and preprocessed sales DataFrame, ready for further analysis.
 """
-def sales_initial_prep(df,
-                       Account_file,
-                       logger):
+def sales_initial_prep(df, Account_file, logger):
     start = timer()
 
     df = df.copy()
@@ -401,7 +353,6 @@ def sales_initial_prep(df,
     logger.debug(f'Sales post initial-prep columns: {df.columns}')
 
     return df
-
 """
 Function: venue_and_attribute_processing
 
@@ -438,9 +389,7 @@ Process:
 Returns:
     pd.DataFrame: The processed DataFrame with updated venue names and additional columns for customer attributes ('ChorusMember', 'DuesTxn', 'Student', 'Subscriber').
 """
-def venue_and_attribute_processing(sales_df,
-                                   chorus_list_file,
-                                   logger):
+def venue_and_attribute_processing(sales_df, chorus_list_file, logger):
     start = timer()
     logger.debug(f'Sales columns: {sales_df.columns}')
 
@@ -483,7 +432,6 @@ def venue_and_attribute_processing(sales_df,
     logger.info(f'Venue and attribute processing complete. Execution Time: {formatted_timing}')
 
     return sales_df
-
 """
 Function: genre_segment_processing
 
@@ -551,8 +499,6 @@ def genre_segment_processing(df, logger):
     logger.info(f'genre processing complete. Execution Time: {formatted_timing}')
 
     return merged_df
-
-
 """
 Function: state_and_city_processing
 
@@ -766,8 +712,6 @@ def state_and_city_processing(sales_df, logger):
     logger.info(f'State and city processing complete. Execution Time: {formatted_timing}')
 
     return sales_df
-
-
 """
 Function: address_and_ZIP_processing
 
@@ -855,8 +799,6 @@ def address_and_ZIP_processing(sales_df, logger):
     logger.debug(sales_df.shape)
 
     return sales_df
-
-
 """
 Function: combine_sales_and_events
 
@@ -882,9 +824,7 @@ Process:
 Returns:
     pd.DataFrame: The merged DataFrame containing combined sales and event data, sorted by 'EventDate_sales'.
 """
-def combine_sales_and_events(sales_df,
-                             event_df,
-                             logger):
+def combine_sales_and_events(sales_df, event_df, logger):
     start = timer()
 
     logger.debug('Sales + Events:')
@@ -923,46 +863,39 @@ def combine_sales_and_events(sales_df,
     logger.info(f'Sales and events merging. Execution Time: {formatted_timing}')
 
     return se_df
-
 """
-def region_processing(df, filename, logger):
-    start = timer()
+Function: final_processing_and_output
 
-    # add in ZIP-Region Assignments
-    raw_regions_df = pd.read_csv(filename, dtype={'PHYSICAL ZIP': str,'ZIP': str})
+Description:
+    This function performs the final processing and aggregation of sales and event data, calculating relevant metrics 
+    like ticket totals and donation adjustments, and outputs the results to a CSV file. The function aggregates records 
+    at the most granular level and optionally processes donations by handling subscription-related adjustments.
 
-    # Extract the first 5 digits of the ZIP code and add leading zeros if necessary
-    raw_regions_df['ZIP'] = raw_regions_df['ZIP'].str[:5].str.zfill(5)
-    raw_regions_df = raw_regions_df[['ZIP','RegionAssignment']].drop_duplicates()
-    #regions_df = raw_regions_df.groupby('ZIP',as_index=False).first()
-    regions_df = raw_regions_df
-    # strip ZIP+4
-    # regions_df['ZIP'] = regions_df['ZIP'].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].str[:5].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].apply(lambda x: '{0:0>5}'.format(x))
-    logger.debug(regions_df)
-    logger.debug(regions_df.shape)
-    logger.debug(regions_df.drop_duplicates().shape)
+Parameters:
+    df (pd.DataFrame): The DataFrame containing the processed sales and event data.
+    output_file (str): The file path where the final processed data will be saved as a CSV file.
+    logger (logging.Logger): A logger object for logging debug information and execution time.
+    processDonations (bool): A flag indicating whether to adjust donation amounts based on subscriptions.
 
-    # dm_df = dm_df.merge(regions_df, on='ZIP', how='left')
-    logger.debug(f'regions pre merge: {df.shape}')
+Process:
+    1. **Event Type Cleanup**: Standardizes event type capitalization by converting strings to title case.
+    2. **Data Aggregation**: 
+        - Groups data by specific columns (like 'OrderNumber', 'EventName', 'EventInstance') and applies aggregation 
+            functions (e.g., sum for quantities, max for prices).
+        - Dynamically adds additional columns for aggregation by keeping the latest record where necessary.
+    3. **Total Calculations**: Calculates ticket totals by multiplying item price by quantity.
+    4. **Optional Donation Processing**: 
+        - Adjusts donation amounts for orders containing subscriptions by setting donations to 0 for non-subscription items
+            in the same order.
+    5. **Final Cleanup**: Strips down the DataFrame to a final set of output columns and writes the results to a CSV file.
 
-    dm_df = df.merge(regions_df, on='ZIP', how='left')
+Returns:
+    pd.DataFrame: The processed DataFrame containing aggregated and cleaned sales and event data.
 
-    logger.debug(f'regions post merge: {dm_df.shape}')
-    logger.debug(f'Results With regions {dm_df.columns}')
-
-    end = timer()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-
-    return dm_df, formatted_timing
+Exceptions:
+    - Handles any errors by logging debug information during processing.
 """
-
-def final_processing_and_output(df,
-                                output_file,
-                                logger,
-                                processDonations):
+def final_processing_and_output(df, output_file, logger, processDonations):
     start = timer()
 
     # Clean up Event Types:
@@ -1055,10 +988,42 @@ def final_processing_and_output(df,
     logger.info(f'Final sales results written to file: {output_file}. Execution Time: {formatted_timing}')
 
     return df
+"""
+def region_processing(df, filename, logger):
+    start = timer()
 
-def add_regions(df,
-                regions_file,
-                logger):
+    # add in ZIP-Region Assignments
+    raw_regions_df = pd.read_csv(filename, dtype={'PHYSICAL ZIP': str,'ZIP': str})
+
+    # Extract the first 5 digits of the ZIP code and add leading zeros if necessary
+    raw_regions_df['ZIP'] = raw_regions_df['ZIP'].str[:5].str.zfill(5)
+    raw_regions_df = raw_regions_df[['ZIP','RegionAssignment']].drop_duplicates()
+    #regions_df = raw_regions_df.groupby('ZIP',as_index=False).first()
+    regions_df = raw_regions_df
+    # strip ZIP+4
+    # regions_df['ZIP'] = regions_df['ZIP'].astype(str)
+    # regions_df['ZIP'] = regions_df['ZIP'].str[:5].astype(str)
+    # regions_df['ZIP'] = regions_df['ZIP'].apply(lambda x: '{0:0>5}'.format(x))
+    logger.debug(regions_df)
+    logger.debug(regions_df.shape)
+    logger.debug(regions_df.drop_duplicates().shape)
+
+    # dm_df = dm_df.merge(regions_df, on='ZIP', how='left')
+    logger.debug(f'regions pre merge: {df.shape}')
+
+    dm_df = df.merge(regions_df, on='ZIP', how='left')
+
+    logger.debug(f'regions post merge: {dm_df.shape}')
+    logger.debug(f'Results With regions {dm_df.columns}')
+
+    end = timer()
+    timing = timedelta(seconds=(end - start))
+    formatted_timing = "{:.2f}".format(timing.total_seconds())
+
+    return dm_df, formatted_timing
+"""
+
+def add_regions(df, regions_file, logger):
     start = timer()
 
     # add in ZIP-Region Assignments
@@ -1092,8 +1057,6 @@ def add_regions(df,
     logger.info(f'Region Processing complete. Execution Time: {formatted_timing}')
 
     return dr_df
-
-
 """
 Function: calculate_genre_scores
 
@@ -1119,6 +1082,20 @@ Returns:
     A pivoted DataFrame where each row is an account and each column represents a genre's normalized percentage score.
 
 """
+
+def load_anonymized_dataset(anon_data_file, logger):
+    start = timer()
+
+    # Load event manifest file and fix column names
+    event_df = pd.read_csv(anon_data_file)
+
+    end = timer()
+    timing = timedelta(seconds=(end - start))
+    formatted_timing = "{:.2f}".format(timing.total_seconds())
+    logger.info(f'Anon Dataset loaded. Execution Time: {formatted_timing}')
+
+    return event_df
+
 def calculate_genre_scores(df, logger):
     start = timer()
 
@@ -1169,123 +1146,13 @@ def calculate_genre_scores(df, logger):
     logger.info(f'Genre Scores complete. Execution Time: {formatted_timing}')
 
     return genre_df
-
-"""
-Function: assign_segment
-
-Description:
-    This function assigns a customer to a specific segment based on Recency, Frequency, and Monetary (RFM) scores, as well as other behavioral and engagement metrics. It categorizes customers into meaningful segments for targeted marketing, customer retention, and engagement strategies.
-
-Parameters:
-    df (pd.Series): A row of customer data, containing various columns like 'RecencyScore', 'FrequencyScore', 'MonetaryScore', 'Subscriber', 'DaysFromFirstEvent', 'DaysFromPenultimateEvent', etc.
-    new_threshold (int): The maximum number of days from the first event to qualify a customer as "New".
-    returning_threshold (int): The maximum number of days since the penultimate event to qualify a customer as "Returning".
-
-Process:
-    1. First, the function prunes out specific groups, such as:
-        - 'Comp': Customers with a monetary score of 0.
-        - 'Group Buyer': Frequent bulk buyers.
-        - 'New': Customers whose first event was recent, based on the new_threshold.
-        - 'Returning': Customers who attended an event recently but had a long gap before the previous event.
-        - 'Best': Customers with the highest possible RFM score (15).
-    
-    2. If not pruned, it checks for high engagement:
-        - 'Potential Chorus Subscriber' or 'Potential Subscriber': Based on recency, frequency, and chorus membership.
-        - 'High': High engagement with frequent and recent event attendance.
-    
-    3. Then, other segments are determined based on the customer's recency and frequency scores:
-        - 'Upsell', 'Reminder', 'Come Again', 'Lapsed', 'One&Done', 'Slipping'.
-    
-    4. If no other conditions are met, the customer is assigned to the 'Others' segment.
-
-Returns:
-    str: The assigned segment as a string value, representing the category into which the customer falls.
-"""
-def assign_segment(df,
-                   new_threshold,
-                   returning_threshold):
-
-    # Helper functions for common checks
-    def is_potential_subscriber():
-        return df['RecencyScore'] >= 4 and df['Subscriber'] != 'True'
-
-    def is_high_engagement():
-        return df['RecencyScore'] >= 4 and df['FrequencyScore'] >= 4
-
-    # Prune out specific groups first
-    if df['MonetaryScore'] == 0:
-        return 'Comp'
-    elif df['FrequentBulkBuyer']:
-        return 'Group Buyer'
-    elif df['DaysFromFirstEvent'] <= new_threshold:
-        return 'New'
-    elif df['RecencyScore'] > 4 and df['DaysFromPenultimateEvent'] > returning_threshold:
-        return 'Returning'
-    elif df['RFMScore'] == 15:
-        return 'Best'
-
-    # Check for high engagement and subscriber potential
-    if is_high_engagement():
-        if df['ChorusMember'] == 'True' and df['Subscriber'] != 'True':
-            return 'Potential Chorus Subscriber'
-        elif is_potential_subscriber():
-            return 'Potential Subscriber'
-        return 'High'
-
-    # Other segments based on Recency and Frequency
-    if df['RecencyScore'] >= 3 and df['FrequencyScore'] >= 2:
-        return 'Upsell'
-    elif df['RecencyScore'] >= 2:
-        if df['FrequencyScore'] > 1:
-            return 'Reminder'
-        return 'Come Again'
-    elif df['RecencyScore'] < 2:
-        if df['FrequencyScore'] <= 1:
-            return 'One&Done'
-        return 'Lapsed'
-    elif df['RecencyScore'] <= 3 and df['FrequencyScore'] >= 2:
-        return 'Slipping'
-
-    return 'Others'
-
-
-def plot_RFM(df, logger):
-    fig = plt.figure(figsize=(20, 20))
-    ax = fig.add_subplot(111, projection='3d')
-
-    xs = df['Recency']
-    ys = df['Frequency']
-    zs = df['Monetary']
-
-    ax.scatter(xs, ys, zs)
-
-    ax.set_xlabel('Recency')
-    ax.set_ylabel('Frequency')
-    ax.set_zlabel('Monetary')
-
-def plot_3D_scatter(xs,x_label, ys, y_label,zs, z_label, logger):
-    fig = plt.figure(figsize=(20, 20))
-    ax = fig.add_subplot(111, projection='3d')
-
-    ax.scatter(xs, ys, zs)
-
-    ax.set_xlabel(x_label)
-    ax.set_ylabel(y_label)
-    ax.set_zlabel(z_label)
-
-def plot_2D_scatter(x,x_label, y, y_label, logger):
-    plt.figure(figsize=(20, 20))
-    plt.scatter(x, y)
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    plt.title(f'Distribution of {x_label} and {y_label}')
-    plt.show()
-
 """
 Function: calculate_rfm
 
 Description:
-    This function calculates Recency, Frequency, and Monetary (RFM) scores for each account based on their event participation and purchasing behavior. It also computes related metrics such as days since the first, latest, and penultimate events. The function normalizes the recency, frequency, and monetary values into a scoring system for further analysis and segmentation.
+    This function calculates Recency, Frequency, and Monetary (RFM) scores for each account based on their event participation 
+    and purchasing behavior. It also computes related metrics such as days since the first, latest, and penultimate events. 
+    The function normalizes the recency, frequency, and monetary values into a scoring system for further analysis and segmentation.
 
 Parameters:
     df (pd.DataFrame): A DataFrame containing customer event and purchase data, including columns like 'AccountName', 'LatestEventDate', 'FirstEventDate', 'PenultimateEventDate', 'EventName', 'Quantity', and 'ItemPrice'.
@@ -1312,7 +1179,10 @@ def calculate_rfm(df, logger):
     # Calculate days from today for both CreatedDate and LatestEventDate
     df['DaysFromLatestEvent'] = (today - df['LatestEventDate']).dt.days
 
-    # Calculate Recency as the maximum of DaysFromCreated or DaysFromLatestEvent, limited to a minimum of 0
+    # Calculate Recency as the maximum of DaysFromCreated or DaysFromLatestEvent,
+    # limited to a minimum of 0. Future events are Recency = 0.
+    # Given our season periods, recency of days beyond one season can be tricky.
+    # TODO: Add "Season recency" as a better alternative?
     df['Recency'] = df['DaysFromLatestEvent']
     df['Recency'] = np.where(df['Recency'] < 0, 0, df['Recency'])
 
@@ -1321,14 +1191,19 @@ def calculate_rfm(df, logger):
     df['DaysFromFirstEvent'] = np.where(df['FirstEventDate'] > today, 0, df['DaysFromFirstEvent'])
 
     # Calculate days since penultimate event, setting to zero if in the future or NA
+    # We need this to determine "Returning" patrons, especially given the pandemic lull.
     df['DaysFromPenultimateEvent'] = (today - df['PenultimateEventDate']).dt.days
     df['DaysFromPenultimateEvent'] = np.where(df['PenultimateEventDate'] > today, 0, df['DaysFromPenultimateEvent'])
     df['DaysFromPenultimateEvent'].fillna(0, inplace=True)
 
-# Frequency = Count of distinct events attended
+    # Frequency = Count of distinct events attended
+    # TODO: Again, perhaps Season Frequency would be more useful.
     df['Frequency'] = df.groupby('AccountName')['EventName'].transform('nunique')
 
     # Monetary = Quantity * ItemPrice
+    # Monetary is a bit dubious because it doesn't include donations,
+    # and ticket prices have varied so much over time. It
+    # 's mostly used to exclude pure comp ticket patrons.
     df['Monetary'] = df['Quantity'] * df['ItemPrice']
 
     # Calculate RFM values
@@ -1351,8 +1226,10 @@ def calculate_rfm(df, logger):
     rfm_df['Monetary'].fillna(0, inplace=True)
     rfm_df['DaysFromFirstEvent'].fillna(3000, inplace=True) # if no DaysFromFirstEvent, then very large
 
-    bins = [0, 120, 400, 700, 1400, 2000,float('inf')]
-    labels = [5, 4, 3, 2, 1,0]
+    # bin boundaries are subjectively based on the data set and an understanding of the business and patron base.
+    # A clustering approach would be better
+    bins = [0, 120, 400, 700, 1400, 2000, float('inf')]
+    labels = [5, 4, 3, 2, 1, 0]
     rfm_df['RecencyScore'] = pd.cut(rfm_df['Recency'], bins=bins, labels=labels, right=False).astype(int)
     logger.debug(f'Recency Score OK')
 
@@ -1366,7 +1243,7 @@ def calculate_rfm(df, logger):
     rfm_df['MonetaryScore'] = pd.cut(rfm_df['Monetary'], bins=bins, labels=labels, right=False)
 
     # extra step to handle outlier patrons who predate sales history.
-    rfm_df['MonetaryScore'] = rfm_df['MonetaryScore'].fillna(0)  # Example: Assigning -1 for unhandled cases
+    rfm_df['MonetaryScore'] = rfm_df['MonetaryScore'].fillna(0)
     # Now safely convert to int
     rfm_df['MonetaryScore'] = rfm_df['MonetaryScore'].astype(int)
 
@@ -1382,121 +1259,82 @@ def calculate_rfm(df, logger):
     logger.info(f'RFM scores complete. Execution Time: {formatted_timing}')
 
     return rfm_df
-
 """
-Function: get_geocode_info
+Function: assign_segment
 
 Description:
-    This function retrieves geocoding information (latitude and longitude) for a given address by making a request to the Google Geocoding API.
+    This function assigns a customer to a specific segment based on Recency, Frequency, and Monetary (RFM) scores, as 
+    well as other behavioral and engagement metrics. It categorizes customers into meaningful segments for targeted marketing, 
+    customer retention, and engagement strategies.
 
 Parameters:
-    address (str): A string containing the full address to be geocoded.
+    df (pd.Series): A row of customer data, containing various columns like 'RecencyScore', 'FrequencyScore', 
+    'MonetaryScore', 'Subscriber', 'DaysFromFirstEvent', 'DaysFromPenultimateEvent', etc.
+    new_threshold (int): The maximum number of days from the first event to qualify a customer as "New".
+    returning_threshold (int): The maximum number of days since the penultimate event to qualify a customer as "Returning".
 
 Process:
-    1. Constructs the request URL using the Google Geocoding API and the provided address.
-    2. Sends a GET request to the API and checks the response for a valid status.
-    3. Parses the API response to extract the latitude and longitude of the address, if available.
-    4. Handles errors such as request issues (HTTP errors), invalid JSON responses, or missing keys.
+    1. First, the function prunes out specific groups, such as:
+        - 'Comp': Customers with a monetary score of 0.
+        - 'Group Buyer': Frequent bulk buyers.
+        - 'New': Customers whose first event was recent, based on the new_threshold.
+        - 'Returning': Customers who attended an event recently but had a long gap before the previous event.
+        - 'Best': Customers with the highest possible RFM score (15).
+    
+    2. If not pruned, it checks for high engagement:
+        - 'Potential Chorus Subscriber' or 'Potential Subscriber': Based on recency, frequency, and chorus membership.
+        - 'High': High engagement with frequent and recent event attendance.
+    
+    3. Then, other segments are determined based on the customer's recency and frequency scores:
+        - 'Upsell', 'Reminder', 'Come Again', 'Lapsed', 'One&Done', 'Slipping'.
+    
+    4. If no other conditions are met, the customer is assigned to the 'Others' segment.
 
 Returns:
-    dict: A dictionary containing the latitude ('lat') and longitude ('lng') if the address is successfully geocoded.
-    None: If there is an error or no geocoding result is found.
+    str: The assigned segment as a string value, representing the category into which the customer falls.
 """
-def get_geocode_info(address):
+def assign_segment(df, new_threshold, returning_threshold):
 
+    # Helper functions for common checks
+    def is_potential_subscriber():
+        return df['RecencyScore'] >= 4 and df['Subscriber'] != 'True'
 
-    google_api_key = 'AIzaSyAC4jkZD-p7bkor1InDTyw2Q2ULXK23yLw'
-    base_url = 'https://maps.googleapis.com/maps/api/geocode/json'
-    params = {'address': address, 'key': google_api_key}
-    try:
-        response = requests.get(base_url, params=params)
-        response.raise_for_status()  # Raises an HTTPError if the HTTP request returned an unsuccessful status code
+    def is_high_engagement():
+        return df['RecencyScore'] >= 4 and df['FrequencyScore'] >= 4
 
-        res_json = response.json()
+    # Prune out specific groups first
+    if df['MonetaryScore'] == 0:
+        return 'Comp'
+    if df['FrequentBulkBuyer']:
+        return 'Group Buyer'
+    if df['DaysFromFirstEvent'] <= new_threshold:
+        return 'New'
+    if df['RecencyScore'] > 4 and df['DaysFromPenultimateEvent'] > returning_threshold:
+        return 'Returning'
+    if df['RFMScore'] == 15:
+        return 'Best'
 
-        if 'results' in res_json and len(res_json['results']) > 0:
-            return res_json['results'][0]['geometry']['location']
-        else:
-            return None
+    # Check for high engagement and subscriber potential
+    if is_high_engagement():
+        if df['ChorusMember'] == 'True' and df['Subscriber'] != 'True':
+            return 'Potential Chorus Subscriber'
+        if is_potential_subscriber():
+            return 'Potential Subscriber'
+        return 'High'
 
-    except RequestException as e:
-        print(f"Error during requests to {base_url}: {str(e)}")
-        return None
-    except ValueError as e:
-        print(f"Value error: {str(e)}")
-        return None
-    except KeyError as e:
-        print(f"Key error: {str(e)}")
-        return None
+    # Other segments based on Recency and Frequency
+    if df['RecencyScore'] >= 3:
+        if df['FrequencyScore'] >= 2:
+            return 'Upsell'
+        return 'Come Again' if df['FrequencyScore'] > 1 else 'Reminder'
 
-"""
-Function: update_geocode_info
+    if df['RecencyScore'] < 2:
+        return 'One&Done' if df['FrequencyScore'] <= 1 else 'Lapsed'
 
-Description:
-    This function checks whether geocoding information (latitude and longitude) is missing for a record and attempts to update it using the Google Geocoding API, provided that the RFM score exceeds a threshold and the address is valid.
+    if df['RecencyScore'] <= 3 and df['FrequencyScore'] >= 2:
+        return 'Slipping'
 
-Parameters:
-    df (pd.Series): A row of customer data, including 'RFMScore', 'Latitude', 'Longitude', 'Address', 'City', 'State', and 'ZIP'.
-    RFMScoreThreshold (int): The minimum RFM score required for an account to trigger geocode lookup.
-    logger (logging.Logger): A logger object for logging debug or information messages.
-
-Process:
-    1. Checks if the RFM score exceeds the given threshold and if latitude and longitude are missing.
-    2. Validates that the address components (address, city, state, ZIP) are not null.
-    3. Calls the `get_geocode_info()` function to retrieve latitude and longitude based on the full address.
-    4. If geocoding is successful, updates the DataFrame with the obtained latitude and longitude values.
-
-Returns:
-    pd.Series: The updated row with new latitude and longitude if geocoding was successful.
-"""
-def update_geocode_info(df,
-                        RFMScoreThreshold,
-                        logger):
-    # Check if the latitude and longitude exist and if conditions are met
-    if df['RFMScore'] > RFMScoreThreshold and pd.isnull(df['Latitude']) and pd.isnull(df['Longitude']):
-        # Additional checks for valid Address, City, State, and ZIP
-        if pd.notnull(df['Address']) and pd.notnull(df['City']) and pd.notnull(df['State']) and pd.notnull(df['ZIP']):
-            # Call get_geocode_info() and update latitude and longitude
-            geocode_info = get_geocode_info(f"{df['Address']}, {df['City']}, {df['State']}, {df['ZIP']}")
-            if geocode_info is not None:
-                #start = timer()
-                df['Latitude'] = geocode_info['lat']
-                df['Longitude'] = geocode_info['lng']
-
-    return df
-
-def get_zip_plus4(street,
-                  city,
-                  state,
-                  zipcode):
-    base_url = 'http://production.shippingapis.com/ShippingAPI.dll'
-    params = {
-        'API': 'ZipCodeLookup',
-        'XML': f'<ZipCodeLookupRequest USERID="usps_userid">'
-               f'<Address><Address1></Address1><Address2>{street}</Address2>'
-               f'<City>{city}</City><State>{state}</State>'
-               f'<Zip5>{zipcode}</Zip5><Zip4></Zip4></Address>'
-               f'</ZipCodeLookupRequest>'
-    }
-    response = requests.get(base_url, params=params)
-    root = ET.fromstring(response.text)
-    address_element = root.find('Address')
-    if address_element is not None:
-        zip4_element = address_element.find('Zip4')
-        if zip4_element is not None:
-            return zip4_element.text
-    return None
-
-def update_zip_plus4_info(df, RFMScoreThreshold):
-    # Check if ZIP+4 exists and if conditions are met
-    if df['RFMScore'] > RFMScoreThreshold and pd.isnull(df['ZIP+4']):
-        # Call get_zip_plus4
-        zip_plus4 = get_zip_plus4(df['Address'], df['City'], df['State'], df['ZIP'])
-        # If get_zip_plus4 returns a value, assign it to df['ZIP+4']
-        if zip_plus4 is not None:
-            df['ZIP+4'] = df['ZIP'] + '-' + zip_plus4
-    return df
-
+    return 'Others'
 """
 Function: add_first_latest_events
 
@@ -1550,7 +1388,6 @@ def add_first_latest_events(df, logger):
     logger.info(f'first/last events added: Execution Time: {formatted_timing}')
 
     return first_latest_events
-
 """
 Function: add_bulk_buyers
 
@@ -1609,14 +1446,6 @@ def add_bulk_buyers(df, logger):
     logger.info(f'Bulk Buyers added: Execution Time: {formatted_timing}')
 
     return df
-
-def save_patron_list(df,
-                     file,
-                     logger):
-    df.to_csv(file, index=False)
-    logger.debug(df.columns)
-    logger.debug(f'The final df: {df}')
-
 """
 Function: get_patron_details
 
@@ -1654,15 +1483,9 @@ Process:
 Returns:
     None: The function processes and saves data to the specified files, logging execution details and errors along the way.
 """
-def get_patron_details(df,
-                       RFMScoreThreshold,
-                       getZIP,
-                       regions_file,
-                       patron_details_file,
-                       patron_temp_file,
-                       new_threshold,
-                       returning_threshold,
-                       logger):
+def get_patron_details(df,RFMScoreThreshold,getZIP,regions_file,
+                       patron_details_file,patron_temp_file,
+                       new_threshold,returning_threshold,anon_data_file, logger):
 
     # Change to working directory
     #os.chdir(data_dir)
@@ -1843,15 +1666,14 @@ def get_patron_details(df,
 
         # Save the results
         logger.debug('Saving the results...')
-        #save_patron_list(final_df,patron_details_file,logger)
         final_df.to_csv(patron_details_file, index=False)
         logger.debug(final_df.columns)
         logger.debug(f'The final df: {final_df}')
 
         anon_df = final_df
-        PII_columns = ['AccountName','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State', 'ZIP']
+        PII_columns = ['AccountName','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State','ZIP+4','State-orig','Latitude','Longitude']
         anon_df.drop(PII_columns, axis=1, inplace=True)
-        anon_df.to_csv('anon_' + patron_details_file, index=False)
+        anon_df.to_csv(anon_data_file, index=False)
         logger.info(f'Patron results written to file: {patron_details_file}')
         logger.info(f'Patron file size: {final_df.shape}')
 
@@ -1864,36 +1686,190 @@ def get_patron_details(df,
         # This will catch any other exceptions
         print(f"An unexpected error occurred: {e}")
 
-"""
-def write_patron_list(df, logger):
-    # create Patron List
 
-    display(df.columns)
-    dp_cols = ['AccountName', 'Address', 'City', 'State', 'ZIP','CreatedDate']
-    #extras = ['State-orig', 'City-orig']
-    extras = []
-    patron_df = df[dp_cols]
-    patron_df.head()
-    patron_df.astype(str)
-    # strip out blank addresses
-    patron_df = patron_df.query('Address != "Nan"')
-    # display(df)
-    # only list mismatches of City or State
-    # df = df.loc[(df['City'] != df['City-orig']) | (df['State'] != df['State-orig'])].drop_duplicates()
-    patron_df = patron_df[dp_cols].drop_duplicates()
-    # keep most recent patron record
-    patron_df = patron_df.sort_values(by=['CreatedDate'], ascending=False).groupby('AccountName').first().reset_index()
-
-    display(patron_df)
-    display(patron_df.shape)
-    # display(patron_df.loc[(patron_df['City'] != patron_df['City-orig'])])
-    # patron_df.to_csv('PatronList.csv',index=False)
-    account_file = 'AccountList.csv'
-    # load sales file and fix column names
-    account_df = pd.read_csv(account_file, low_memory=False).rename(columns={'Account Name': 'AccountName'})
-    account_df = patron_df.merge(account_df, on='AccountName', how='left')[
-        ['AccountName', 'Account ID', 'Address', 'City', 'State', 'ZIP']]
-    display(account_df.head())
-    account_df.to_csv('AccountList.csv', index=False)
+# General functions
+def safe_divide(x, y):
+    with np.errstate(divide='ignore', invalid='ignore'):
+        result = np.divide(x, y)
+        result[~np.isfinite(result)] = 0  # Set NaN, inf, -inf to 0
+    return result
 """
+Function: generate_identifier
+
+Description:
+    This function generates a unique identifier for a given account name by applying the SHA-256 hash function. 
+    The result is a secure, consistent, and unique string (hash) that can be used as an anonymous identifier for each account.
+
+Parameters:
+    account_name (str): The account name (string) for which the unique identifier will be generated.
+
+Process:
+    1. Encodes the account name into bytes.
+    2. Applies the SHA-256 hash function to the encoded account name.
+    3. Returns the resulting hash as a hexadecimal string.
+
+Returns:
+    str: A unique SHA-256 hash string for the provided account name.
+"""
+def generate_identifier(account_name):
+    # Use SHA-256 hash function
+    return hashlib.sha256(account_name.encode()).hexdigest()
+"""
+Function: load_event_manifest
+
+Description:
+    This function loads and processes an event manifest file from an Excel sheet. 
+    It performs initial cleaning, such as removing test events, fixing date formats, filling missing values, 
+    and sorting the events by date, name, and instance. The function prepares the event data for further analysis 
+    and logs the process along with execution time.
+
+Parameters:
+    manifest_file (str): The file path to the event manifest Excel file.
+    logger (logging.Logger): A logger object for logging debug information and execution time.
+
+Process:
+    1. **Load the Event Manifest**: Loads the event manifest data from the specified Excel file.
+    2. **Remove Test Events**: Filters out any rows where 'EventName' contains variations of the word "test" (case-insensitive).
+    3. **Fix Dates**: Converts the 'EventDate' column to a simple date format.
+    4. **Fill Missing Values**: Fills missing values in the columns 'EventGenre', 'EventClass', 'EventStatus', 'EventSubGenre', and 'EventVenue' with the placeholder 'None', and fills missing 'EventCapacity' values with 1.
+    5. **Sort the Data**: Sorts the DataFrame by 'EventDate', 'EventName', and 'EventInstance' in descending order.
+    6. **Logging and Execution Time**: Logs the shape of the DataFrame and records the execution time.
+
+Returns:
+    pd.DataFrame: The cleaned and processed DataFrame containing event data.
+"""
+def plot_RFM(df, logger):
+    fig = plt.figure(figsize=(20, 20))
+    ax = fig.add_subplot(111, projection='3d')
+
+    xs = df['Recency']
+    ys = df['Frequency']
+    zs = df['Monetary']
+
+    ax.scatter(xs, ys, zs)
+
+    ax.set_xlabel('Recency')
+    ax.set_ylabel('Frequency')
+    ax.set_zlabel('Monetary')
+def plot_3D_scatter(xs,x_label, ys, y_label,zs, z_label, logger):
+    fig = plt.figure(figsize=(20, 20))
+    ax = fig.add_subplot(111, projection='3d')
+
+    ax.scatter(xs, ys, zs)
+
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.set_zlabel(z_label)
+def plot_2D_scatter(x,x_label, y, y_label, logger):
+    plt.figure(figsize=(20, 20))
+    plt.scatter(x, y)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.title(f'Distribution of {x_label} and {y_label}')
+    plt.show()
+    """
+Function: get_geocode_info
+
+Description:
+    This function retrieves geocoding information (latitude and longitude) for a given address by making a request to the Google Geocoding API.
+
+Parameters:
+    address (str): A string containing the full address to be geocoded.
+
+Process:
+    1. Constructs the request URL using the Google Geocoding API and the provided address.
+    2. Sends a GET request to the API and checks the response for a valid status.
+    3. Parses the API response to extract the latitude and longitude of the address, if available.
+    4. Handles errors such as request issues (HTTP errors), invalid JSON responses, or missing keys.
+
+Returns:
+    dict: A dictionary containing the latitude ('lat') and longitude ('lng') if the address is successfully geocoded.
+    None: If there is an error or no geocoding result is found.
+"""
+def get_geocode_info(address):
+
+
+    google_api_key = 'AIzaSyAC4jkZD-p7bkor1InDTyw2Q2ULXK23yLw'
+    base_url = 'https://maps.googleapis.com/maps/api/geocode/json'
+    params = {'address': address, 'key': google_api_key}
+    try:
+        response = requests.get(base_url, params=params)
+        response.raise_for_status()  # Raises an HTTPError if the HTTP request returned an unsuccessful status code
+
+        res_json = response.json()
+
+        if 'results' in res_json and len(res_json['results']) > 0:
+            return res_json['results'][0]['geometry']['location']
+        else:
+            return None
+
+    except RequestException as e:
+        print(f"Error during requests to {base_url}: {str(e)}")
+        return None
+    except ValueError as e:
+        print(f"Value error: {str(e)}")
+        return None
+    except KeyError as e:
+        print(f"Key error: {str(e)}")
+        return None
+"""
+Function: update_geocode_info
+
+Description:
+    This function checks whether geocoding information (latitude and longitude) is missing for a record and attempts to update it using the Google Geocoding API, provided that the RFM score exceeds a threshold and the address is valid.
+
+Parameters:
+    df (pd.Series): A row of customer data, including 'RFMScore', 'Latitude', 'Longitude', 'Address', 'City', 'State', and 'ZIP'.
+    RFMScoreThreshold (int): The minimum RFM score required for an account to trigger geocode lookup.
+    logger (logging.Logger): A logger object for logging debug or information messages.
+
+Process:
+    1. Checks if the RFM score exceeds the given threshold and if latitude and longitude are missing.
+    2. Validates that the address components (address, city, state, ZIP) are not null.
+    3. Calls the `get_geocode_info()` function to retrieve latitude and longitude based on the full address.
+    4. If geocoding is successful, updates the DataFrame with the obtained latitude and longitude values.
+
+Returns:
+    pd.Series: The updated row with new latitude and longitude if geocoding was successful.
+"""
+def update_geocode_info(df, RFMScoreThreshold, logger):
+    # Check if the latitude and longitude exist and if conditions are met
+    if df['RFMScore'] > RFMScoreThreshold and pd.isnull(df['Latitude']) and pd.isnull(df['Longitude']):
+        # Additional checks for valid Address, City, State, and ZIP
+        if pd.notnull(df['Address']) and pd.notnull(df['City']) and pd.notnull(df['State']) and pd.notnull(df['ZIP']):
+            # Call get_geocode_info() and update latitude and longitude
+            geocode_info = get_geocode_info(f"{df['Address']}, {df['City']}, {df['State']}, {df['ZIP']}")
+            if geocode_info is not None:
+                #start = timer()
+                df['Latitude'] = geocode_info['lat']
+                df['Longitude'] = geocode_info['lng']
+
+    return df
+def get_zip_plus4(street, city, state, zipcode):
+    base_url = 'http://production.shippingapis.com/ShippingAPI.dll'
+    params = {
+        'API': 'ZipCodeLookup',
+        'XML': f'<ZipCodeLookupRequest USERID="usps_userid">'
+               f'<Address><Address1></Address1><Address2>{street}</Address2>'
+               f'<City>{city}</City><State>{state}</State>'
+               f'<Zip5>{zipcode}</Zip5><Zip4></Zip4></Address>'
+               f'</ZipCodeLookupRequest>'
+    }
+    response = requests.get(base_url, params=params)
+    root = ET.fromstring(response.text)
+    address_element = root.find('Address')
+    if address_element is not None:
+        zip4_element = address_element.find('Zip4')
+        if zip4_element is not None:
+            return zip4_element.text
+    return None
+def update_zip_plus4_info(df, RFMScoreThreshold):
+    # Check if ZIP+4 exists and if conditions are met
+    if df['RFMScore'] > RFMScoreThreshold and pd.isnull(df['ZIP+4']):
+        # Call get_zip_plus4
+        zip_plus4 = get_zip_plus4(df['Address'], df['City'], df['State'], df['ZIP'])
+        # If get_zip_plus4 returns a value, assign it to df['ZIP+4']
+        if zip_plus4 is not None:
+            df['ZIP+4'] = df['ZIP'] + '-' + zip_plus4
+    return df
 #%%
