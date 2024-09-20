@@ -35,12 +35,12 @@ def load_event_manifest(manifest_file, logger):
     # Load event manifest file and fix column names
     event_df = pd.read_excel(manifest_file)
 
+    # Fix dates
+    event_df['EventDate'] = pd.to_datetime(event_df['EventDate'].copy()).dt.date
+
     # Remove test events
     event_df = event_df[event_df['EventName'].str.contains('test|TEST|Test', case=False) == False]
     logger.debug(f'Event shape {event_df.shape}')
-
-    # Fix dates
-    event_df['EventDate'] = pd.to_datetime(event_df['EventDate']).dt.date
 
     # Fill missing values
     columns_to_fill = ['EventGenre', 'EventClass', 'EventStatus', 'EventSubGenre', 'EventVenue']
@@ -178,7 +178,7 @@ def load_sales_file(sales_file, yearsOfData, logger):
     # load sales file and fix column names
     sales_df = pd.read_csv(sales_file, encoding= 'latin1', low_memory=False)
     logger.debug(f'Raw sales file: {sales_df.shape}')
-    logger.debug(f'Raw sales file:/n{sales_df.head}')
+    logger.debug(f'Raw sales file:/n{sales_df.columns}')
 
     # Rename Salesforce column names to be more readable.
     sales_df = sales_df.rename(columns={
@@ -233,7 +233,7 @@ def load_sales_file(sales_file, yearsOfData, logger):
     })
 
     # Convert CreatedDate to datetime if it's not already
-    sales_df['CreatedDate'] = pd.to_datetime(sales_df['CreatedDate'], errors='coerce')
+    sales_df['CreatedDate'] = pd.to_datetime(sales_df['CreatedDate'].copy(), errors='coerce')
 
     # Calculate earliest date to keep and prune earlier rows
     logger.info(f'Starting sales size: {sales_df.shape}')
@@ -279,13 +279,30 @@ Returns:
 """
 def sales_initial_prep(df, Account_file, logger):
     start = timer()
-
-    df = df.copy()
     logger.debug(df.shape)
     logger.debug(f'Sales pre-prep columns: {df.columns}')
 
+    # Convert date to a simple date format
+    df['EventDate_sales'] = pd.to_datetime(df['EventDate_sales'].copy()).dt.date
+
+    df = df.copy()
+
     #Remove deleted tickets, as these were placeholders for subscriptions or canceled orders.
     df = df[df['TicketStatus'] != 'Deleted']
+
+    # TODO: These AccountName steps are done at transaction-level
+    #  only because we need an AccountName to generate the AccountId.
+    #  We should get ContactId from saleforce and all of this could be
+    #  then moved to Patron Detail Processing.
+    # set any null AccountNames to walk up
+    df['AccountName'] = df['AccountName'].fillna('Walk Up Sales')
+
+    # for debug only and expensive at transaction-level.
+    #null_accountnames = df[df['AccountName'].isnull()]
+    #logger.debug(f'List of records missing account names: {null_accountnames}')
+
+    # add AccountId on the assumption that this function generates a unique, repeatable ID.
+    df['AccountId'] = df['AccountName'].apply(generate_identifier)
 
     # Remove redundant columns from Salesforce data file.
     redundant_columns = [
@@ -324,9 +341,6 @@ def sales_initial_prep(df, Account_file, logger):
     # Fill in null AccountNames with First Name + Last Name
     logger.debug(f"Number of missing AccountNames: {df['AccountName'].isna().sum()}")
     df.loc[df['AccountName'].isna(), 'AccountName'] = df['FirstName'] + ' ' + df['LastName'] + ' ' + '(generated)'
-
-    # Convert date to a simple date format
-    df['EventDate_sales'] = pd.to_datetime(df['EventDate_sales']).dt.date
 
     #merge in AccountIds - this method assumes an AccountId file has been created. Salesforce doesn't do that, though.
     #acc_df = pd.read_csv(Account_file).rename(columns={'Account Name': 'AccountName','Account ID': 'AccountId'})
@@ -929,6 +943,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
 
     # and use latest record for any columns using the 'last' aggregation
     df = df.sort_values(by=['CreatedDate'])
+    logger.debug(f'Sales aggregation created')
 
     for col in df.columns:
         # Check if the column is not in the groupby_cols and agg_dict
@@ -938,6 +953,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
 
     # aggregate to the min unique set of records for our purposes.
     df = df.groupby(groupby_cols).agg(agg_dict).reset_index()
+    logger.debug(f'Sales aggregation complete')
     logger.debug(df.shape)
 
     # Now calculate totals
@@ -947,21 +963,21 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # logger.debug(df[dm_df['EventName_sales'].isna()])
     logger.debug(df.shape)
 
-    if processDonations:
-        # Create a boolean mask for 'Subscription' in the EventName
-        subscription_mask = df['EventName'].str.contains('Subscription')
+    # Create a boolean mask for 'Subscription' in the EventName
+    subscription_mask = df['EventName'].str.contains('Subscription')
 
-        # Get the OrderNumbers with 'Subscription' in the EventName
-        subscription_orders = df.loc[subscription_mask, 'OrderNumber'].unique()
+    # Get the OrderNumbers with 'Subscription' in the EventName
+    subscription_orders = df.loc[subscription_mask, 'OrderNumber'].unique()
 
-        # Create a boolean mask for OrderNumber in subscription_orders
-        order_mask = df['OrderNumber'].isin(subscription_orders)
+    # Create a boolean mask for OrderNumber in subscription_orders
+    order_mask = df['OrderNumber'].isin(subscription_orders)
 
-        # Get the indices of records with OrderNumber in subscription_orders and without 'Subscription' in EventName
-        indices_to_zero = df.loc[order_mask & ~subscription_mask].index
+    # Get the indices of records with OrderNumber in subscription_orders and without 'Subscription' in EventName
+    indices_to_zero = df.loc[order_mask & ~subscription_mask].index
 
-        # Set DonationAmount to 0 for those records
-        df.loc[indices_to_zero, 'DonationAmount'] = 0
+    # Set DonationAmount to 0 for those records
+    df.loc[indices_to_zero, 'DonationAmount'] = 0
+    logger.debug(f'Donation handling complete.')
 
     # TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
 
@@ -970,24 +986,34 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     #Strip to final set up columns for transaction file output.
     # We're dropping patron attribute information from the transaction file, but keeping them for patron details.
     output_cols = ['EventName','EventInstance','EventId', 'InstanceId', 'EventDate', 'EventVenue', 'EventCapacity', 'Season',
-                   'AccountName','ContactId',#'AccountId','FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'ContactEmail', 'OrderEmail',
+                   'AccountName','ContactId','AccountId',
+                   #'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'ContactEmail', 'OrderEmail',
                    'PaymentMethod', 'Method', 'Origin', 'CreatedDate', 'EntryDate',
                    'OrderNumber', 'TicketStatus', 'OrderStatus', 'Allocation', 'TicketType','OrderSource',
                    'EventStatus', 'EventType', 'EventClass', 'EventGenre', 'EventSubGenre',
                    'Quantity', 'ItemPrice', 'TicketTotal','PriceLevel', 'AmountPaid', 'DonationName', 'DonationAmount','Total',
                    'DiscountCode', 'DiscountTotal', 'PreDiscountTotal', 'UnitDiscount', 'UnitDiscountType',
-                   #'ChorusMember','Student','Choral','Subscriber','Brass','Classical', 'Contemporary', 'Dance'
+                   'ChorusMember','DuesTxn','Student','Subscriber',#'Choral','Brass','Classical', 'Contemporary', 'Dance'
                    ]
 
-    # write results to output file
-    df[output_cols].to_csv(output_file, index=False)
+    # write results to output file for only output columns.
+    output_df = df[output_cols]
+    logger.debug(f'Sales Output Columns:{output_df.columns}')
+
+    output_df.to_csv(output_file, index=False)
+    logger.debug(f'full results written.')
+
+    PII_columns = ['AccountName','DonationName']
+    anon_df = output_df.drop(PII_columns, axis=1)
+    anon_df.to_csv('anon_' + output_file, index=False)
+    logger.debug(f'PII safe Output written. {anon_df.columns}')
 
     end = timer()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Final sales results written to file: {output_file}. Execution Time: {formatted_timing}')
 
-    return df
+    return df # the full data frame is needed for Patron details
 """
 def region_processing(df, filename, logger):
     start = timer()
@@ -1483,9 +1509,14 @@ Process:
 Returns:
     None: The function processes and saves data to the specified files, logging execution details and errors along the way.
 """
-def get_patron_details(df,RFMScoreThreshold,getZIP,regions_file,
-                       patron_details_file,patron_temp_file,
-                       new_threshold,returning_threshold,anon_data_file, logger):
+def get_patron_details(df,
+                       RFMScoreThreshold,
+                       getZIP,
+                       regions_file,
+                       patron_details_file,
+                       new_threshold,
+                       returning_threshold,
+                       logger):
 
     # Change to working directory
     #os.chdir(data_dir)
@@ -1494,34 +1525,22 @@ def get_patron_details(df,RFMScoreThreshold,getZIP,regions_file,
         # Preprocess the data
         logger.debug('Preprocessing patron data...')
 
-        df['EventDate'] = pd.to_datetime(df['EventDate'], errors='coerce')
+        df['EventDate'] = pd.to_datetime(df['EventDate'].copy(), errors='coerce')
 
         # only keep Live or Virtual that either completed or are planned. No subscriptions, cancelled, test, etc.
         df = df[df['EventType'].isin(['Live'])]
         df = df[df['EventStatus'].isin(['Complete', 'Future'])]
 
-        # ignore deleted transactions
-        df = df[df['TicketStatus'] != 'Deleted']
-
-        # set any null AccountNames to walk up
-        df['AccountName'] = df['AccountName'].fillna('Walk Up Sales')
-
-        # for debug only...
-        null_accountnames = df[df['AccountName'].isnull()]
-        logger.debug(f'List of records missing account names: {null_accountnames}')
-
-        # add AccountId on the assumption that this function generates a unique, repeatable ID.
-        # TODO only call this for newly created Account Names, but the time savings are miniscule.
-        df['AccountId'] = df['AccountName'].apply(generate_identifier)
-
-        logger.debug(f'Patron Txn shape: {df.shape}')
-
-        relevant_columns = ['AccountName','AccountId','FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP','OrderEmail',
+        # Prune to only columns relevant for Patron details.
+        relevant_columns = ['AccountName','ContactId','AccountId','FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP','OrderEmail',
                             'Quantity','ItemPrice','CreatedDate','EventDate','EventName',
                             'Subscriber','ChorusMember', 'DuesTxn', 'Season','Student',
                             'EventGenre','Choral','Brass','Classical', 'Contemporary', 'Dance']
+        df = df[relevant_columns]
 
-        df = df[relevant_columns].sort_values(['AccountName', 'CreatedDate'])
+        logger.debug(f'Patron Txn shape: {df.shape}')
+
+        df = df.sort_values(['AccountName', 'CreatedDate'])
         df = df.rename(columns={'Season':'LatestSeason'})
 
         first_latest_events = add_first_latest_events(df,logger)
@@ -1573,12 +1592,12 @@ def get_patron_details(df,RFMScoreThreshold,getZIP,regions_file,
 
         #logger.debug(f'Last Entry: {last_entry_df.shape}')
         logger.debug(f'Last Entry: {last_entry_df.columns}')
-        logger.debug(f'Last Entry: {last_entry_df}')
+        logger.debug(f'Last Entry: {last_entry_df.shape}')
 
         #final prep
         keep_columns = ['AccountName','AccountId','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State', 'ZIP',
                         'FirstEvent', 'FirstEventDate','LatestEvent','LatestEventDate', 'PenultimateEvent', 'PenultimateEventDate', 'LatestSeason',
-                        #'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
+                        'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
                         #'Classical', 'Choral','Contemporary', 'Dance','Brass',
                         'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BrassScore', 'PreferredGenre','Omni']
 
@@ -1673,13 +1692,12 @@ def get_patron_details(df,RFMScoreThreshold,getZIP,regions_file,
         anon_df = final_df
         PII_columns = ['AccountName','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State','ZIP+4','State-orig','Latitude','Longitude']
         anon_df.drop(PII_columns, axis=1, inplace=True)
-        anon_df.to_csv(anon_data_file, index=False)
+        anon_df.to_csv('anon_' + patron_details_file, index=False)
         logger.info(f'Patron results written to file: {patron_details_file}')
-        logger.info(f'Patron file size: {final_df.shape}')
+        logger.info(f'Patron file size: {anon_df.shape}')
 
     except PermissionError:
-        print(f'The output file is already open. Writing to {patron_temp_file}')
-        final_df.to_csv(patron_temp_file, index=False)
+        print(f'The output file is already open.')
     except FileNotFoundError:
         print("The output file was not found. Please check the file path.")
     except Exception as e:
