@@ -46,7 +46,7 @@ Description:
     for the global frequency of each genre, giving higher weight to less frequent genres. 
 
 Parameters:
-    df (pd.DataFrame): A DataFrame containing event data with columns 'AccountName', 'EventDate', and 'EventGenre'.
+    df (pd.DataFrame): A DataFrame containing event data with columns 'ContactId', 'EventDate', and 'EventGenre'.
     logger (logging.Logger): A logger object for logging execution details.
 
 Process:
@@ -64,35 +64,35 @@ Returns:
 def calculate_genre_scores(df, logger):
     start = timer()
 
-    # Drop duplicates to get unique events per AccountName, Event Date, and genre
-    unique_events_df = df.drop_duplicates(subset=['AccountName', 'EventDate', 'EventGenre'])
+    # Drop duplicates to get unique events per ContactId, Event Date, and genre
+    unique_events_df = df.drop_duplicates(subset=['ContactId', 'EventDate', 'EventGenre'])
 
     # Calculate the global frequency for each genre
     global_genre_freq = unique_events_df['EventGenre'].value_counts() / len(unique_events_df)
 
     # Calculate the by-genre counts for each account
-    genre_counts = unique_events_df.groupby(['AccountName', 'EventGenre']).size().reset_index(name='Count')
+    genre_counts = unique_events_df.groupby(['ContactId', 'EventGenre']).size().reset_index(name='Count')
 
     # Adjusted normalization: Normalize counts based on a modified factor
     genre_counts['NormalizedCount'] = genre_counts.apply(lambda row: row['Count'] / (1 + global_genre_freq[row['EventGenre']]), axis=1)
 
     # Calculate the total normalized count for each account
-    total_counts = genre_counts.groupby('AccountName')['NormalizedCount'].sum().reset_index(name='TotalNormalized')
+    total_counts = genre_counts.groupby('ContactId')['NormalizedCount'].sum().reset_index(name='TotalNormalized')
 
     # Calculate normalized percentage for each genre for each account
-    genre_counts = genre_counts.merge(total_counts, on='AccountName')
+    genre_counts = genre_counts.merge(total_counts, on='ContactId')
     genre_counts['NormalizedPercentage'] = genre_counts['NormalizedCount'] / genre_counts['TotalNormalized']
 
     # Reshape and Finalize Data
-    genre_df = genre_counts.pivot(index='AccountName', columns='EventGenre', values='NormalizedPercentage').fillna(0).reset_index()
+    genre_df = genre_counts.pivot(index='ContactId', columns='EventGenre', values='NormalizedPercentage').fillna(0).reset_index()
     # Determine the preferred genre
     def get_preferred_genre(row):
         return row.idxmax()
 
-    genre_df['PreferredGenre'] = genre_df.drop(columns=['AccountName']).apply(get_preferred_genre, axis=1)
+    genre_df['PreferredGenre'] = genre_df.drop(columns=['ContactId']).apply(get_preferred_genre, axis=1)
 
     # Add a suffix of 'Score' to EventGenre columns
-    genre_df.columns = [col + 'Score' if col != 'AccountName' and col != 'PreferredGenre' else col for col in genre_df.columns]
+    genre_df.columns = [col + 'Score' if col != 'ContactId' and col != 'PreferredGenre' else col for col in genre_df.columns]
 
 
     # Define your is_omni function
@@ -120,7 +120,7 @@ Description:
     The function normalizes the recency, frequency, and monetary values into a scoring system for further analysis and segmentation.
 
 Parameters:
-    df (pd.DataFrame): A DataFrame containing customer event and purchase data, including columns like 'AccountName', 'LatestEventDate', 'FirstEventDate', 'PenultimateEventDate', 'EventName', 'Quantity', and 'ItemPrice'.
+    df (pd.DataFrame): A DataFrame containing customer event and purchase data, including columns like 'ContactId', 'LatestEventDate', 'FirstEventDate', 'PenultimateEventDate', 'EventName', 'Quantity', and 'ItemPrice'.
     logger (logging.Logger): A logger object for logging execution details, debugging information, and completion time.
 
 Process:
@@ -163,7 +163,7 @@ def calculate_rfm(df, logger):
 
     # Frequency = Count of distinct events attended
     # TODO: Again, perhaps Season Frequency would be more useful.
-    df['Frequency'] = df.groupby('AccountName')['EventName'].transform('nunique')
+    df['Frequency'] = df.groupby('ContactId')['EventName'].transform('nunique')
 
     # Monetary = Quantity * ItemPrice
     # Monetary is a bit dubious because it doesn't include donations,
@@ -172,7 +172,7 @@ def calculate_rfm(df, logger):
     df['Monetary'] = df['Quantity'] * df['ItemPrice']
 
     # Calculate RFM values
-    rfm_df = df.groupby('AccountName').agg({
+    rfm_df = df.groupby('ContactId').agg({
         'Recency': 'min',
         'Frequency': 'max',
         'Monetary': 'sum',
@@ -182,7 +182,8 @@ def calculate_rfm(df, logger):
         'ChorusMember': 'last',
         'DuesTxn': 'last',
         'FrequentBulkBuyer': 'last',
-        'Student': 'last'})
+        'Student': 'last'
+    })
     logger.info(rfm_df.shape)
 
     # Fill NaN values
@@ -337,4 +338,3 @@ def plot_2D_scatter(x,x_label, y, y_label, logger):
     plt.ylabel(y_label)
     plt.title(f'Distribution of {x_label} and {y_label}')
     plt.show()
-#%%
