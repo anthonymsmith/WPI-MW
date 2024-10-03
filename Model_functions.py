@@ -24,6 +24,14 @@ import matplotlib.pyplot as plt
 import requests
 from requests.exceptions import RequestException
 
+from sklearn.metrics import silhouette_score, silhouette_samples
+import matplotlib.pyplot as plt
+import seaborn as sns
+from mpl_toolkits.mplot3d import Axes3D
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans, AgglomerativeClustering
+
+
 def load_anonymized_dataset(anon_data_file, logger):
     start = timer()
 
@@ -136,7 +144,7 @@ Process:
 Returns:
     pd.DataFrame: A DataFrame containing calculated RFM scores and other aggregated customer data, with columns for RecencyScore, FrequencyScore, MonetaryScore, and the combined RFMScore.
 """
-def calculate_rfm(df, logger):
+def calculate_rfm(df, binning, logger):
     start = timer()
     # Calculate today's date or a specific snapshot date
     today = datetime.today() # or replace with a specific date
@@ -192,33 +200,45 @@ def calculate_rfm(df, logger):
     rfm_df['Monetary'].fillna(0, inplace=True)
     rfm_df['DaysFromFirstEvent'].fillna(3000, inplace=True) # if no DaysFromFirstEvent, then very large
 
-    # bin boundaries are subjectively based on the data set and an understanding of the business and patron base.
-    # A clustering approach would be better
-    bins = [0, 120, 400, 700, 1400, 2000, float('inf')]
-    labels = [5, 4, 3, 2, 1, 0]
-    rfm_df['RecencyScore'] = pd.cut(rfm_df['Recency'], bins=bins, labels=labels, right=False).astype(int)
-    logger.debug(f'Recency Score OK')
+    if binning == 0: 
+        # bin boundaries are subjectively based on the data set and an understanding of the business and patron base.
+        # A clustering approach would be better
+        bins = [0, 120, 400, 700, 1400, 2000, float('inf')]
+        labels = [5, 4, 3, 2, 1, 0]
+        rfm_df['RecencyScore'] = pd.cut(rfm_df['Recency'], bins=bins, labels=labels, right=False).astype(int)
+        logger.debug(f'Recency Score OK')
 
-    bins = [0,1, 2, 4, 8, 12, float('inf')]
-    labels = [0, 1, 2, 3, 4, 5]
-    rfm_df['FrequencyScore'] = pd.cut(rfm_df['Frequency'], bins=bins, labels=labels, right=False).astype(int)
-    logger.debug(f'Frequency Score OK')
+        bins = [0,1, 2, 4, 8, 12, float('inf')]
+        labels = [0, 1, 2, 3, 4, 5]
+        rfm_df['FrequencyScore'] = pd.cut(rfm_df['Frequency'], bins=bins, labels=labels, right=False).astype(int)
+        logger.debug(f'Frequency Score OK')
 
-    bins = [0, 10, 70, 200, 400, 1000, float('inf')]
-    labels = [0, 1, 2, 3, 4, 5]
-    rfm_df['MonetaryScore'] = pd.cut(rfm_df['Monetary'], bins=bins, labels=labels, right=False)
+        bins = [0, 10, 70, 200, 400, 1000, float('inf')]
+        labels = [0, 1, 2, 3, 4, 5]
+        rfm_df['MonetaryScore'] = pd.cut(rfm_df['Monetary'], bins=bins, labels=labels, right=False)
 
-    # extra step to handle outlier patrons who predate sales history.
-    rfm_df['MonetaryScore'] = rfm_df['MonetaryScore'].fillna(0)
-    # Now safely convert to int
-    rfm_df['MonetaryScore'] = rfm_df['MonetaryScore'].astype(int)
+        # extra step to handle outlier patrons who predate sales history.
+        rfm_df['MonetaryScore'] = rfm_df['MonetaryScore'].fillna(0)
+        # Now safely convert to int
+        rfm_df['MonetaryScore'] = rfm_df['MonetaryScore'].astype(int)
 
-    logger.debug(f'Monetary Score OK')
+        logger.debug(f'Monetary Score OK')
 
-    # Aggregate scores
-    rfm_df['RFMScore'] = rfm_df['RecencyScore'] + rfm_df['FrequencyScore'] + rfm_df['MonetaryScore']
-    rfm_df['RFMScore'] = rfm_df['RFMScore'].fillna(0)
-
+        # Aggregate scores
+        rfm_df['RFMScore'] = rfm_df['RecencyScore'] + rfm_df['FrequencyScore'] + rfm_df['MonetaryScore']
+        rfm_df['RFMScore'] = rfm_df['RFMScore'].fillna(0)
+        
+    elif binning == 1: #Aayan
+        rfm_df['RecencyScore'] = pd.qcut(rfm_df['Recency'], 6, labels=[5, 4, 3, 2, 1, 0])
+        logger.debug(f'Recency Score OK')
+        rfm_df['FrequencyScore'] = pd.qcut(rfm_df['Frequency'].rank(method='first'), 6, labels=[0, 1, 2, 3, 4, 5])
+        logger.debug(f'Frequency Score OK')
+        rfm_df['MonetaryScore'] = pd.qcut(rfm_df['Monetary'].rank(method='first'), 6, labels=[0, 1, 2, 3, 4, 5])
+        logger.debug(f'Monetary Score OK')
+        rfm_df['RFMScore'] = (rfm_df['RecencyScore'].astype(int) + 
+                            rfm_df['FrequencyScore'].astype(int) + 
+                            rfm_df['MonetaryScore'].astype(int))
+        rfm_df['RFMScore'].fillna(0, inplace=True)
     end = timer()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
@@ -301,6 +321,165 @@ def assign_segment(df, new_threshold, returning_threshold):
         return 'Slipping'
 
     return 'Others'
+
+
+def calculate_AUM_and_KMeans(df): #AAYAN
+    df['AUM'] = df.apply(lambda row: row['Monetary'] / row['DaysFromFirstEvent'] if row['DaysFromFirstEvent'] > 0 else 0, axis=1)
+    rfm_aum_data = df[['Recency', 'Frequency', 'Monetary', 'AUM']]
+    scaler = StandardScaler()
+    rfm_aum_scaled = scaler.fit_transform(rfm_aum_data)
+    wcss = []
+    for i in range(1, 11):
+        kmeans = KMeans(n_clusters=i, init='k-means++', max_iter=300, n_init=10, random_state=0)
+        kmeans.fit(rfm_aum_scaled)
+        wcss.append(kmeans.inertia_)
+    optimal_clusters = 4
+    kmeans = KMeans(n_clusters=optimal_clusters, init='k-means++', max_iter=300, n_init=10, random_state=0)
+    kmeans.fit(rfm_aum_scaled)
+    df['Cluster KMeans'] = kmeans.predict(rfm_aum_scaled)
+    return df, wcss
+
+def KMeans_ElbowPlot(wcss): #AAYAN
+    sns.set(style="whitegrid")
+    plt.figure(figsize=(8, 6))
+    plt.plot(range(1, 11), wcss, marker='o', linestyle='--', color='b', label='WCSS')
+    plt.title('Elbow Method for Optimal Clusters', fontsize=16, fontweight='bold')
+    plt.xlabel('Number of Clusters', fontsize=14)
+    plt.ylabel('Within-Cluster Sum of Squares (WCSS)', fontsize=14)
+    plt.xlim(1, 10)
+    plt.ylim(min(wcss) - 1000, max(wcss) + 1000)
+    plt.grid(True, which='both', linestyle='--', linewidth=0.7, color='gray')
+    for i, w in enumerate(wcss):
+        plt.text(i + 1, w + 100, f'{w:.0f}', ha='center', va='bottom', fontsize=10, color='black')
+    plt.tight_layout()
+    plt.legend()
+    plt.show()
+
+def analyze_silhouette_scores(df, max_clusters=10):
+    silhouette_avg_scores = []
+    for n_clusters in range(2, max_clusters + 1):
+        kmeans = KMeans(n_clusters=n_clusters, init='k-means++', max_iter=300, n_init=10, random_state=0)
+        cluster_labels = kmeans.fit_predict(df[['Recency', 'Frequency', 'Monetary', 'AUM']])
+        silhouette_avg = silhouette_score(df[['Recency', 'Frequency', 'Monetary', 'AUM']], cluster_labels)
+        silhouette_avg_scores.append(silhouette_avg)
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(2, max_clusters + 1), silhouette_avg_scores, marker='o', linestyle='--', color='skyblue', label='Average Silhouette Score')
+    plt.title('Silhouette Scores for Varying Number of Clusters', fontsize=16)
+    plt.xlabel('Number of Clusters', fontsize=14)
+    plt.ylabel('Average Silhouette Score', fontsize=14)
+    plt.xticks(range(2, max_clusters + 1))  # Set x-ticks to match the range of clusters
+    plt.grid(True)
+    plt.axhline(y=max(silhouette_avg_scores), color='red', linestyle='--', label='Max Silhouette Score')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    
+def snake_plot_rfm(df, k_values=[4, 5, 6]):
+    rfm_aum_data = df[['Recency', 'Frequency', 'Monetary']]
+    scaler = StandardScaler()
+    rfm_aum_scaled = scaler.fit_transform(rfm_aum_data)
+    for k in k_values:
+        kmeans = KMeans(n_clusters=k, init='k-means++', max_iter=300, n_init=10, random_state=0)
+        df['Cluster KMeans'] = kmeans.fit_predict(rfm_aum_scaled)
+        cluster_means = df.groupby('Cluster KMeans')[['Recency', 'Frequency', 'Monetary']].mean().reset_index(drop=True)
+        cluster_means_scaled = scaler.inverse_transform(cluster_means)
+        plt.figure(figsize=(10, 6))
+        for i in range(k):
+            plt.plot(['Recency', 'Frequency', 'Monetary'], cluster_means_scaled[i], marker='o', label=f'Cluster {i+1}')
+        plt.title(f'Snake Plot for K = {k}', fontsize=16, fontweight='bold')
+        plt.xlabel('Metrics', fontsize=14)
+        plt.ylabel('Mean Values', fontsize=14)
+        plt.xticks(['Recency', 'Frequency', 'Monetary'])  # Set x-ticks to match metric names
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+def KMeans_RFMPlot(df): #AAYAN
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    scatter = ax.scatter(df['Recency'], df['Frequency'], df['Monetary'], c=df['Cluster KMeans'], cmap='viridis', s=100, alpha=0.7)
+    ax.set_title('3D K-means Clustering of RFM', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Recency', fontsize=14)
+    ax.set_ylabel('Frequency', fontsize=14)
+    ax.set_zlabel('Monetary', fontsize=14)
+    cbar = plt.colorbar(scatter)
+    cbar.set_label('Cluster', fontsize=12)
+    plt.show()
+
+
+def calculate_AUM_and_Agglomerative(df): #AAYAN
+    df['AUM'] = df.apply(lambda row: row['Monetary'] / row['DaysFromFirstEvent'] if row['DaysFromFirstEvent'] > 0 else 0, axis=1)
+    rfm_aum_data = df[['Recency', 'Frequency', 'Monetary', 'AUM']]
+    scaler = StandardScaler()
+    rfm_aum_scaled = scaler.fit_transform(rfm_aum_data)
+    optimal_clusters = 4
+    agglomerative = AgglomerativeClustering(n_clusters=optimal_clusters, linkage='ward')
+    df['Cluster Agglo'] = agglomerative.fit_predict(rfm_aum_scaled)
+    return df
+
+def analyze_silhouette_scores_agglomerative(df, max_clusters=10): #AAYAN
+    silhouette_avg_scores = []
+    rfm_aum_data = df[['Recency', 'Frequency', 'Monetary', 'AUM']]
+    scaler = StandardScaler()
+    rfm_aum_scaled = scaler.fit_transform(rfm_aum_data)
+    for n_clusters in range(2, max_clusters + 1):
+        agglomerative = AgglomerativeClustering(n_clusters=n_clusters, linkage='ward')
+        cluster_labels = agglomerative.fit_predict(rfm_aum_scaled)
+        silhouette_avg = silhouette_score(rfm_aum_scaled, cluster_labels)
+        silhouette_avg_scores.append(silhouette_avg)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(2, max_clusters + 1), silhouette_avg_scores, marker='o', linestyle='--', color='skyblue', label='Avg Silhouette Score')
+    plt.title('Silhouette Scores for Varying Clusters (Agglomerative)', fontsize=16)
+    plt.xlabel('Number of Clusters', fontsize=14)
+    plt.ylabel('Average Silhouette Score', fontsize=14)
+    plt.grid(True)
+    plt.axhline(y=max(silhouette_avg_scores), color='red', linestyle='--', label='Max Silhouette Score')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+def Agglomerative_RFMPlot(df): #AAYAN
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    scatter = ax.scatter(df['Recency'], df['Frequency'], df['Monetary'], c=df['Cluster Agglo'], cmap='viridis', s=100, alpha=0.7)
+    ax.set_title('3D Agglomerative Clustering of RFM', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Recency', fontsize=14)
+    ax.set_ylabel('Frequency', fontsize=14)
+    ax.set_zlabel('Monetary', fontsize=14)
+    cbar = plt.colorbar(scatter)
+    cbar.set_label('Cluster', fontsize=12)
+    plt.show()
+
+def compare_clustering_solutions(agglomerative_df, kmeans_df):  # AAYAN
+    comparison = pd.DataFrame({'Agglomerative_Cluster': agglomerative_df['Cluster Agglo'],'KMeans_Cluster': kmeans_df['Cluster KMeans']})
+    crosstab = pd.crosstab(comparison['Agglomerative_Cluster'], comparison['KMeans_Cluster'])
+    print(crosstab)
+    return crosstab
+
+#NEEDED for Agglomerative, - Function to analyze the cluster size, function to compare characteristing for clusters,  DENDOGRAM
+
+# #AAYAN
+traindata = r'c:\Users\akris\OneDrive\Desktop\Music Worcester Work\Patrondetails_train_data.csv' 
+testdata = r'C:\Users\akris\OneDrive\Desktop\Music Worcester Work\Patrondetails_test_data.csv'
+traindata = pd.read_csv(traindata,low_memory=False)
+# K-MeansClustering----------------------------------
+kmeansdf, wcss = calculate_AUM_and_KMeans(traindata)
+print(kmeansdf)
+KMeans_ElbowPlot(wcss)
+analyze_silhouette_scores(kmeansdf, max_clusters=10)
+snake_plot_rfm(kmeansdf, k_values=[4, 5, 6])
+KMeans_RFMPlot(kmeansdf)
+# AgglomerativeClustering---------------------------------
+aggdf = calculate_AUM_and_Agglomerative(traindata)
+print(aggdf)
+analyze_silhouette_scores_agglomerative(aggdf, max_clusters=10)
+Agglomerative_RFMPlot(aggdf)
+# Compare both -----------------------------------
+compare_clustering_solutions(aggdf, kmeansdf)
+
 
 # General functions
 def safe_divide(x, y):
