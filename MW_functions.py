@@ -1320,7 +1320,7 @@ def get_patron_details(df,
 
         # Calculate RFM scores
         logger.info('Calculating RFM scores...')
-        rfm_df = mod.calculate_rfm(df.copy(), logger)
+        rfm_df = mod.calculate_rfm(df.copy(), 0, logger) #AAYAN
         logger.debug(f'RFM columns: {rfm_df.columns}')
         #logger.debug(f'Raw RFM shape: {rfm_df.shape}')
         logger.debug(f'Raw RFM: {rfm_df.head}')
@@ -1369,6 +1369,16 @@ def get_patron_details(df,
         anon_df = df.copy()
         PII_columns = ['AccountName','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State']
         anon_df.drop(PII_columns, axis=1, inplace=True)
+        # K-MeansClustering---------------------------------- #Aayan
+        anon_df, wcss = mod.calculate_AUM_and_KMeans(anon_df)
+        mod.KMeans_ElbowPlot(wcss)
+        mod.analyze_silhouette_scores(anon_df, max_clusters=10)
+        mod.snake_plot_rfm(anon_df, k_values=[4, 5, 6])
+        mod.KMeans_RFMPlot(anon_df)
+        # AgglomerativeClustering---------------------------------
+        anon_df = mod.calculate_AUM_and_Agglomerative(anon_df)
+        mod.analyze_silhouette_scores_agglomerative(anon_df, max_clusters=10)
+        mod.Agglomerative_RFMPlot(anon_df)
         logger.debug(f'Anon Patron columns: {anon_df.columns}')
         logger.debug(f'Anon Patron shape: {anon_df.shape}')
         anon_output_file = 'anon_' + patron_details_file
