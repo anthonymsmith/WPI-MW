@@ -224,7 +224,7 @@ def load_sales_file(sales_file, yearsOfData, logger):
         'Ticket Order: Order Origin': 'Origin',
         'Ticket Order: Order Total': 'Total',
         'Ticket Order: Payment Method': 'PaymentMethod',
-        'Contact ID': 'ContactId',
+        'Contact: Contact ID': 'ContactId',
         'Contact: Account Name: Account Name': 'AccountName',
         'Ticket Order: Order Source': 'OrderSource',
         'Ticket Price Level: Price': 'PriceLevel',
@@ -314,7 +314,7 @@ def sales_initial_prep(df, Account_file, logger):
     #Remove deleted tickets, as these were placeholders for subscriptions or canceled orders.
     df = df[df['TicketStatus'] != 'Deleted']
 
-    # TODO: These AccountName steps are done at transaction-level
+    # These AccountName steps are done at transaction-level
     #  only because we need an AccountName to generate the AccountId.
     #  We should get AccountId from saleforce and all of this could be
     #  then moved to Patron Detail Processing.
@@ -325,21 +325,10 @@ def sales_initial_prep(df, Account_file, logger):
     #null_accountnames = df[df['AccountName'].isnull()]
     #logger.debug(f'List of records missing account names: {null_accountnames}')
 
-    # add AccountId on the assumption that this function generates a unique, repeatable ID.
-    # TODO When the salesforce AccountId problem gets solved, can delete this.
-    df['AccountId'] = df['AccountName'].apply(generate_identifier)
+    # Assign AccountId based on whether ContactId exists
+    df['AccountId'] = df['ContactId'].where(df['ContactId'].notnull(),
+                                            df['AccountName'].apply(generate_identifier))
 
-    """
-    # Remove redundant columns from Salesforce data file.
-    redundant_columns = [
-        'Ticketable Event: 18 Digit Event ID',
-        'Ticketable Event: 18 Digit Event ID.1',
-        'Ticketable Event: Ticketable Event ID.1',
-        'Status.1',
-        'Contact: Email.1'
-    ]
-    df.drop(redundant_columns, axis=1, inplace=True)
-    """
     # Define a dictionary for numeric columns and their fillna values
     numeric_fillna_dict = {
         'ItemPrice': 0,
@@ -1432,21 +1421,22 @@ def get_patron_details(df,
             logger.debug(f'original: {orig_df.columns}')
             logger.debug(f'original: {orig_df.head}')
 
-            # keep only most recent AccountId instance.
-            orig_df = orig_df.sort_values(['AccountId','RFMScore'])
-            orig_df = orig_df.groupby('AccountId').first().reset_index()
+            # keep only most recent AccountName instance.
+            # Note: using names as ContactId has changed, but AccountName is constant.
+            orig_df = orig_df.sort_values(['AccountName','RFMScore'])
+            orig_df = orig_df.groupby('AccountName').first().reset_index()
 
             # only run if the ZIP+4 format is wrong.
             #orig_df['ZIP+4'] = np.nan
 
             # Update existing lat, long and ZIP+4 from the previous run.
-            df = df.merge(orig_df[['AccountId','Latitude','Longitude','ZIP+4']],on='AccountId', how='left').drop_duplicates()
+            df = df.merge(orig_df[['AccountName','Latitude','Longitude','ZIP+4']],on='AccountName', how='left').drop_duplicates()
 
             # Get the list of accounts missing lat/long that meet the RFM threshold criteria
-            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) & (df['RFMScore'] > RFMScoreThreshold)][['AccountId','Address','City','State','ZIP']]
+            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) & (df['RFMScore'] > RFMScoreThreshold)][['AccountName','Address','City','State','ZIP']]
             logger.debug(f'list with missing lat/long : {list_df}')
 
-            count_missing_before = list_df['AccountId'].nunique()
+            count_missing_before = list_df['AccountName'].nunique()
             logger.debug(f'Patrons with missing Lat/Long before: {count_missing_before}')
 
             if GetLatLong:
@@ -1466,8 +1456,8 @@ def get_patron_details(df,
             else:
                 logger.info('Bypassing Lat/Long and ZIP+4...')
 
-            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) & (df['RFMScore'] > RFMScoreThreshold)][['AccountId']]
-            count_missing_after = list_df['AccountId'].nunique()
+            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) & (df['RFMScore'] > RFMScoreThreshold)][['AccountName']]
+            count_missing_after = list_df['AccountName'].nunique()
             new_counts = count_missing_before - count_missing_after
 
             logger.info(f'{count_missing_after} contacts are missing Lat/Long, likely to bad addresses')
