@@ -213,54 +213,71 @@ def calculate_growth_score(df, current_year):
 
     return growth_score
 
-"""
-def calculate_growth_score(df):
-    
-    #Calculate growth score using linear regression on FiscalYear and Monetary values.
-    
-    # Prepare the data
-    fiscal_years = df['FiscalYear'].values.reshape(-1, 1)  # Fiscal years as the predictor
-    monetary_values = df['Monetary'].values  # Monetary values as the response
-
-    # Include years with zero monetary values in the regression
-    if len(np.unique(fiscal_years)) > 1:  # Ensure at least 2 distinct fiscal years
-        reg = LinearRegression().fit(fiscal_years, monetary_values)
-        growth_score = reg.coef_[0]  # Slope of the regression line as growth score
-    else:
-        growth_score = 0  # If all fiscal years are the same, growth score is 0
-
-    return growth_score
-"""
-def calculate_adjusted_overall_regularity(df, logger):
+def calculate_regularity(df, logger=None):
+    """
+    Calculate Regularity based on their event attendance data. It combines inter-season,
+    intra-season, average event frequency per season, and event "cluster attendance."
+    """
+    from datetime import datetime
     today = datetime.today()
 
-    # Step 1: Adjust recency based on seasons (already present in your code)
+    # Ensure EventDate is datetime64[ns]
+    if not pd.api.types.is_datetime64_any_dtype(df['EventDate']):
+        df['EventDate'] = pd.to_datetime(df['EventDate'], errors='coerce')
+
+    # Drop rows with invalid EventDate values
+    if df['EventDate'].isna().any():
+        df = df.dropna(subset=['EventDate'])
+
+    # Determine FiscalYear for season-based recency calculation
+    logger.info("Calculating FiscalYear...")
     df['FiscalYear'] = df['EventDate'].apply(lambda x: x.year if x.month > 6 else x.year - 1)
-    df['SeasonRecency'] = today.year - df['FiscalYear']  # Season-based recency
 
-    # Step 2: Sort by AccountId and EventDate to calculate the gap between consecutive events
+    # Determine the first eligible event and fiscal year for each patron
+    df['FirstEventDate'] = df.groupby('AccountId')['EventDate'].transform('min')
+    df['FirstFiscalYear'] = df.groupby('AccountId')['FiscalYear'].transform('min')
+
+    # Filter out events and seasons not eligible for each patron
+    df = df[df['EventDate'] >= df['FirstEventDate']]
+
+    # Calculate SeasonRecency as the difference between the current year and the fiscal year
+    logger.info("Calculating SeasonRecency...")
+    df['SeasonRecency'] = today.year - df['FiscalYear']
+
+    # Sort by AccountId and EventDate to calculate the gap between consecutive events
     df = df.sort_values(by=['AccountId', 'EventDate'])
-
-    # Calculate the difference in days between consecutive events for each patron
     df['EventGap'] = df.groupby('AccountId')['EventDate'].diff().dt.days
 
-    # Step 3: Cluster concerts that occur within 4 consecutive days
-    # Initialize the cluster id
-    df['EventCluster'] = (df['EventGap'] > 4).cumsum()  # Start a new cluster if gap > 4 days
+    # Cluster events that occur within 4 consecutive days (e.g., weekend festivals)
+    logger.info("Calculating EventClusters...")
+    df['EventCluster'] = (df.groupby('AccountId')['EventDate']
+                          .transform(lambda x: (x.diff().dt.days > 3).cumsum()))
 
-    # Step 4: Calculate the cluster frequency for each patron (number of unique clusters attended)
-    df['ClusterFrequency'] = df.groupby('AccountId')['EventCluster'].transform('nunique')
+    # Calculate ClusterFrequency for each account by counting unique clusters within each season
+    df['ClusterFrequency'] = df.groupby(['AccountId', 'FiscalYear'])['EventCluster'].transform('nunique')
 
-    # Step 5: Handle the pandemic period (March 2020 to December 2021)
-    pandemic_start = pd.to_datetime('2020-03-01')
-    pandemic_end = pd.to_datetime('2021-12-31')
-    df['DaysFromLatestEvent'] = (today - df['LatestEventDate']).dt.days
-    df['DaysFromLatestEvent'] = np.where(df['LatestEventDate'].between(pandemic_start, pandemic_end), 0, df['DaysFromLatestEvent'])
+    # Calculate SeasonCount (number of unique seasons attended) for inter-season regularity
+    logger.info("Calculating SeasonCount...")
+    df['SeasonCount'] = df.groupby('AccountId')['FiscalYear'].transform('nunique')
 
-    # Step 6: Calculate regularity score using recency and cluster frequency
-    df['Regularity'] = (0.5 * df['SeasonRecency']) + (0.5 * df['ClusterFrequency'])
+    # Calculate EventFrequencyPerSeason (average events attended per season)
+    logger.info("Calculating EventFrequencyPerSeason...")
+    total_events = df.groupby('AccountId')['EventCluster'].transform('count')
+    df['EventFrequencyPerSeason'] = total_events / df['SeasonCount']
 
-    # Continue with the rest of the RFM calculation or return the dataframe with regularity
+    # Define max values for normalization of metrics
+    max_season_count = df['SeasonCount'].max()
+    max_cluster_frequency = df['ClusterFrequency'].max()
+    max_event_frequency_per_season = df['EventFrequencyPerSeason'].max()
+
+    # Calculate the final Regularity score with weights for each metric
+    w1, w2, w3 = 0.4, 0.2, 0.4
+    logger.info("Calculating Regularity score...")
+    df['Regularity'] = (w1 * (df['SeasonCount'] / max_season_count) +
+                        w2 * (df['ClusterFrequency'] / max_cluster_frequency) +
+                        w3 * (df['EventFrequencyPerSeason'] / max_event_frequency_per_season))
+
+    # Return the dataframe with the Regularity score
     return df
 
 
@@ -305,193 +322,190 @@ Returns:
         - 'GrowthScore', 'AYM', 'RecencyZ', 'FrequencyZ', 'MonetaryZ', 'GrowthZ', 'AYMZ'
         - Additional categorical fields such as 'Subscriber', 'ChorusMember', etc.
 """
-def calculate_rfm(df, logger):
+def calculate_patron_metrics(df, logger):
+    from datetime import datetime, timedelta
+    import numpy as np
+    import pandas as pd
+    from timeit import default_timer as timer
+
     start = timer()
-    today = datetime.today()  # Use today's date or a specific snapshot date
+    today = datetime.today()
 
-    # Calculate days from today for both CreatedDate and LatestEventDate
-    df['DaysFromLatestEvent'] = (today - df['LatestEventDate']).dt.days
+    # Convert date columns to datetime
+    date_columns = ['FirstEventDate', 'LatestEventDate', 'PenultimateEventDate', 'SecondEventDate', 'CreatedDate']
+    for col in date_columns:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
 
-    # Calculate Recency as the maximum of DaysFromCreated or DaysFromLatestEvent,
-    # limited to a minimum of 0. Future events are Recency = 0.
-    df['Recency'] = df['DaysFromLatestEvent']
-    df['Recency'] = np.where(df['Recency'] < 0, 0, df['Recency'])
+    # Identify single-event patrons
+    df['EventCount'] = df.groupby('AccountId')['EventName'].transform('count')
+    single_event_mask = df['EventCount'] == 1
+    multi_event_mask = df['EventCount'] > 1
 
-    # Calculate days since first event, clipping to 0 if in the future
-    df['DaysFromFirstEvent'] = (today - df['FirstEventDate']).dt.days
-    df['DaysFromFirstEvent'] = np.where(df['FirstEventDate'] > today, 0, df['DaysFromFirstEvent'])
+    # Assign NaN to single-event patrons for second/penultimate-related fields
+    df.loc[single_event_mask, ['SecondEvent', 'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate']] = np.nan
+    df.loc[single_event_mask, ['DaysToReturn', 'DaysFromPenultimateEvent']] = np.nan
 
-    df['Lifespan'] = (df['DaysFromFirstEvent'] - df['DaysFromLatestEvent']) / 365.0
+    # Calculate DaysToReturn for multi-event patrons
+    if multi_event_mask.any():
+        df.loc[multi_event_mask, 'DaysToReturn'] = (
+            (df['SecondEventDate'] - df['FirstEventDate'])
+            .where(df['SecondEventDate'].notna() & df['FirstEventDate'].notna(), np.nan)
+            .dt.days
+        )
 
-    # Calculate days since penultimate event, setting to zero if in the future or NA
-    df['DaysFromPenultimateEvent'] = (today - df['PenultimateEventDate']).dt.days
-    df['DaysFromPenultimateEvent'] = np.where(df['PenultimateEventDate'] > today, 0, df['DaysFromPenultimateEvent'])
-    df['DaysFromPenultimateEvent'].fillna(0, inplace=True)
+    # Calculate DaysFromPenultimateEvent for multi-event patrons
+    if multi_event_mask.any():
+        df.loc[multi_event_mask, 'DaysFromPenultimateEvent'] = (
+            (today - df['PenultimateEventDate'])
+            .where(df['PenultimateEventDate'].notna(), np.nan)
+            .dt.days
+        )
+        df['DaysFromPenultimateEvent'] = df['DaysFromPenultimateEvent'].clip(lower=0)
+
+    # Calculate DaysFromFirstEvent
+    logger.info("Calculating DaysFromFirstEvent...")
+    if 'FirstEventDate' in df.columns:
+        df['DaysFromFirstEvent'] = (
+            (today - df['FirstEventDate'])
+            .where(df['FirstEventDate'].notna(), np.nan)
+            .dt.days
+        )
+
+    # Calculate Recency
+    logger.info("Calculating Recency...")
+    if 'LatestEventDate' in df.columns:
+        df['DaysFromLatestEvent'] = (
+            (today - df['LatestEventDate'])
+            .where(df['LatestEventDate'].notna(), np.nan)  # Handle missing dates
+            .dt.days  # Extract days
+        )
+        df['Recency'] = df['DaysFromLatestEvent']
+
+    # Ensure Recency is numeric before further processing
+    df['Recency'] = pd.to_numeric(df['Recency'], errors='coerce')
+    df['Recency'] = df['Recency'].fillna(float('inf'))  # Replace NaN with infinity for binning
+    df['Recency'] = df['Recency'].clip(lower=0)
+
+# Calculate Lifespan
+    logger.info("Calculating Lifespan...")
+    if 'DaysFromFirstEvent' in df.columns and 'DaysFromLatestEvent' in df.columns:
+        df['Lifespan'] = (df['DaysFromFirstEvent'] - df['DaysFromLatestEvent']) / 365.0
+        df['Lifespan'] = np.where(df['Lifespan'] == 0, 0.01, df['Lifespan'])
 
     # Frequency = Count of distinct events attended
+    logger.info("Calculating Frequency...")
     df['Frequency'] = df.groupby('AccountId')['EventName'].transform('nunique')
 
     # Include ticket donations + ticket sales. Monetary = Quantity * ItemPrice
-    df['Monetary'] = df['Quantity'] * df['ItemPrice'] # + df['DonationAmount']
+    logger.info("Calculating Monetary...")
+    df['Monetary'] = pd.to_numeric(df['Quantity'], errors='coerce') * pd.to_numeric(df['ItemPrice'], errors='coerce')
 
-    # Create a FiscalYear column based on fiscal year ending June 30
-    df['CreatedDate'] = pd.to_datetime(df['CreatedDate'])  # Ensure CreatedDate is datetime
+    # Create a FiscalYear column
     df['FiscalYear'] = df['CreatedDate'].apply(lambda x: x.year if x.month > 6 else x.year - 1)
 
-    # Aggregate monetary value by Fiscal Year using the FiscalYear column
+    # Aggregate monetary value by Fiscal Year
     monetary_by_fiscal_year = df.groupby(['AccountId', 'FiscalYear']).agg({'Monetary': 'sum'}).reset_index()
 
-    # Get the unique AccountIds
+    # Get the range of fiscal years
+    fiscal_years_range = pd.DataFrame({
+        'FiscalYear': range(monetary_by_fiscal_year['FiscalYear'].min(), today.year + 1)
+    })
+
+    # Cartesian join for fiscal years
     unique_accounts = df[['AccountId']].drop_duplicates()
-
-    # Get the range of fiscal years from the minimum to today's year
-    fiscal_years_range = pd.DataFrame({'FiscalYear': range(monetary_by_fiscal_year['FiscalYear'].min(), today.year + 1)})
-
-    # Perform a Cartesian join while ensuring uniqueness in fiscal years
     all_years = unique_accounts.merge(fiscal_years_range, how='cross').drop_duplicates()
-
-    # Merge with monetary_by_fiscal_year to include zero spending years
     all_years = all_years.merge(monetary_by_fiscal_year, on=['AccountId', 'FiscalYear'], how='left').fillna(0)
 
-    # Calculate growth scores using the linear regression approach for each account using a 5-year weighted approach
+    # Calculate growth scores
+    logger.info("Calculating GrowthScore...")
     current_year = today.year
     growth_scores = all_years.groupby('AccountId').apply(calculate_growth_score, current_year).reset_index()
-    #growth_scores = all_years.groupby('AccountId').apply(calculate_growth_score).reset_index()
     growth_scores.columns = ['AccountId', 'GrowthScore']
 
-    # Calculate AYM (Average Yearly Monetary spend) based on active fiscal years
+    # Calculate Average Yearly Monetary spend
+    logger.info("Calculating Average Yearly Monetary spend...")
     aym_df = all_years.groupby('AccountId').agg(
         total_monetary=('Monetary', 'sum'),
-        active_fiscal_years=('Monetary', lambda x: (x > 0).sum())  # Count only fiscal years with non-zero spend
+        active_fiscal_years=('Monetary', lambda x: (x > 0).sum())
     ).reset_index()
-
-    # Calculate AYM based on active years
     aym_df['AYM'] = aym_df['total_monetary'] / aym_df['active_fiscal_years']
 
-    # Call the function to calculate adjusted regularity (with clustering logic)
-    df = calculate_adjusted_overall_regularity(df, logger)
+    # Call the function to calculate adjusted regularity
+    logger.info("Calculating Regularity...")
+    df = calculate_regularity(df, logger)
 
-    # Now merge back into the RFM table
-    rfm_df = df.groupby('AccountId').agg({
+    # Merge back into metrics
+    metrics_df = df.groupby('AccountId').agg({
         'Recency': 'min',
         'Frequency': 'max',
         'Monetary': 'sum',
         'Lifespan': 'max',
         'DaysFromFirstEvent': 'min',
+        'DaysToReturn': 'min',
         'DaysFromPenultimateEvent': 'min',
-        'ClusterFrequency': 'max',  # Regularity will come from here
-        'Regularity': 'max',  # Include the calculated regularity metric
+        'ClusterFrequency': 'max',
+        'Regularity': 'max',
         'Subscriber': 'last',
         'ChorusMember': 'last',
         'DuesTxn': 'last',
         'FrequentBulkBuyer': 'last',
         'Student': 'last'
     }).reset_index()
-    logger.info(rfm_df.shape)
 
-    rfm_df = rfm_df.merge(growth_scores, on='AccountId', how='left')
-    rfm_df = rfm_df.merge(aym_df[['AccountId', 'AYM']], on='AccountId', how='left')
+    metrics_df = metrics_df.merge(growth_scores, on='AccountId', how='left')
+    metrics_df = metrics_df.merge(aym_df[['AccountId', 'AYM']], on='AccountId', how='left')
 
     # Fill NaN values
-    rfm_df['Recency'].fillna(0, inplace=True)
-    rfm_df['Frequency'].fillna(0, inplace=True)
-    rfm_df['Monetary'].fillna(0, inplace=True)
-    rfm_df['GrowthScore'].fillna(0, inplace=True)
-    rfm_df['AYM'].fillna(0, inplace=True)
-    rfm_df['Regularity'].fillna(0, inplace=True)
-    rfm_df['DaysFromFirstEvent'].fillna(3600, inplace=True)  # If no DaysFromFirstEvent, then large value
+    metrics_df['Recency'] = metrics_df['Recency'].fillna(0)
+    metrics_df['Frequency'] = metrics_df['Frequency'].fillna(0)
+    metrics_df['Monetary'] = metrics_df['Monetary'].fillna(0)
+    metrics_df['GrowthScore'].fillna(0, inplace=True)
+    metrics_df['AYM'].fillna(0, inplace=True)
+    metrics_df['Regularity'].fillna(0, inplace=True)
+    metrics_df['DaysFromFirstEvent'].fillna(3600, inplace=True)
 
-    # Exclude $0 comp tickets for z-score calculations
-    filtered_rfm_df = rfm_df[rfm_df['Monetary'] > 0]
+    # Calculate additional metrics
+    metrics_df['RecentEventGap'] = metrics_df['DaysFromPenultimateEvent'] - metrics_df['Recency']
+    metrics_df['Engagement'] = safe_divide(metrics_df['Frequency'], metrics_df['DaysFromFirstEvent'])
 
-    # Calculate z-scores for Recency, Frequency, Monetary, GrowthScore, AYM, and Regularity
-    rfm_df['RecentEventGap'] = rfm_df['DaysFromPenultimateEvent'] - rfm_df['Recency']
-    rfm_df['RecencyZ'] = stats.zscore(filtered_rfm_df['Recency'])
-    rfm_df['FrequencyZ'] = stats.zscore(filtered_rfm_df['Frequency'])
-    rfm_df['MonetaryZ'] = stats.zscore(filtered_rfm_df['Monetary'])
-    rfm_df['GrowthZ'] = stats.zscore(filtered_rfm_df['GrowthScore'])
-    rfm_df['AYMZ'] = stats.zscore(filtered_rfm_df['AYM'])
-    rfm_df['RegularityZ'] = stats.zscore(filtered_rfm_df['Regularity'])
+    # Apply binning for RFM scores
+    # Ensure Recency is numeric and clean
+    logger.info("Preparing Recency for binning...")
+    try:
+        metrics_df['Recency'] = pd.to_numeric(metrics_df['Recency'], errors='coerce')  # Convert to numeric
 
-    # Replace NaN or infinite values with 0 for z-scores
-    rfm_df[['RecencyZ', 'FrequencyZ', 'MonetaryZ', 'GrowthZ', 'AYMZ', 'RegularityZ']] = (
-        rfm_df[['RecencyZ', 'FrequencyZ', 'MonetaryZ', 'GrowthZ', 'AYMZ', 'RegularityZ']]
-        .replace([np.inf, -np.inf], np.nan).fillna(0))
+        # Replace NaN with infinity to assign them to the last bin
+        metrics_df['Recency'] = metrics_df['Recency'].fillna(float('inf'))
 
+        # Apply Recency binning
+        bins = [0, 120, 400, 700, 1500, 2000, float('inf')]
+        labels = [5, 4, 3, 2, 1, 0]
+        metrics_df['RecencyScore'] = pd.cut(metrics_df['Recency'], bins=bins, labels=labels, right=False).astype(int)
+    except Exception as e:
+        logger.error(f"Error during RecencyScore binning: {e}")
+        raise
 
-    # Apply binning for Recency, Frequency, and Monetary Scores
-    # these bins are not evenly distributed but tweaked to identify classes of patrons
-
-    # Receny score is the hardest to define given seasonal variations.
-    # "New" tends to be < 250 to catch an entire season, but a score of 5 is really
-    # for recent in-season or subscriber purchases. The boundaries are then mostly
-    # to catch seasons with multiples of years + a little bit.
-    # Note: The pandemic started around 1500 days ago circa 2024 season start.
-    bins = [0, 120, 400, 700, 1500, 2000, float('inf')]
-    labels = [5, 4, 3, 2, 1, 0]
-    rfm_df['RecencyScore'] = pd.cut(rfm_df['Recency'], bins=bins, labels=labels, right=False).astype(int)
-
-    # These bins try to differentiate single from multiple from regular attendance.
-    # It skews heavily toward one or two and then towards > 50 from loyalists.
-    # Scores in the middle range of 10-40 are relatively rare.
     bins = [0, 1, 3, 5, 8, 11, float('inf')]
     labels = [0, 1, 2, 3, 4, 5]
-    rfm_df['FrequencyScore'] = pd.cut(rfm_df['Frequency'], bins=bins, labels=labels, right=False).astype(int)
+    metrics_df['FrequencyScore'] = pd.cut(metrics_df['Frequency'], bins=bins, labels=labels, right=False).astype(int)
+    logger.info("Frequency Score done...")
 
-    # These bins first separate Comp/TTO and then $7.50 youth tickets,
-    # then single event ticket pairs, and then up from there.
     bins = [0, 10, 80, 200, 400, 1000, float('inf')]
     labels = [0, 1, 2, 3, 4, 5]
-    rfm_df['MonetaryScore'] = pd.cut(rfm_df['Monetary'], bins=bins, labels=labels, right=False).astype(int)
+    metrics_df['MonetaryScore'] = pd.cut(metrics_df['Monetary'], bins=bins, labels=labels, right=False).astype(int)
+    metrics_df['MonetaryScore'] = metrics_df['MonetaryScore'].fillna(0).astype(int)
+    logger.info("Monetary Score done...")
 
-    # Extra step to handle outlier patrons who predate sales history
-    rfm_df['MonetaryScore'] = rfm_df['MonetaryScore'].fillna(0).astype(int)
-
-    """
-    # This was an attempt to define bins uniformly, but the data just don't fit the goal
-    # of Scores that fit patron journey stages. Frequency is particularly hard to fit 
-    # because its distribution is so skewed to extremes. It doesn't execute successfuly 
-    # because of skew and range problems became apparent and I abandoned it.
-
-    # Calculate RFM Scores Using Quantiles for Granularity
-    # Define quantile-based scoring function
-    # Calculate quantiles and map to 1-5 scale for Recency, Frequency, and Monetary
-    # Quantile-based scoring directly on raw values with 5 bins
-    # Quantile-based scoring with duplicate edges handled
-    
-    def quantile_to_score(series):
-        # Using `pd.qcut` with duplicates='drop' to ensure unique bin edges
-        return pd.qcut(series, 5, labels=range(1, 6), duplicates='drop').astype(int)
-
-    # Apply custom scoring logic
-    # Recency: Higher quantiles mean more recent, so invert to match 1-5 scale (higher score = more recent)
-    rfm_df['RecencyScore'] = 6 - quantile_to_score(rfm_df['Recency'])  # Inverting to make recent dates score higher
-
-    # Frequency: Apply quantile scoring and handle Frequency == 1 as a special case
-    rfm_df['FrequencyScore'] = np.where(rfm_df['Frequency'] == 1, 1, quantile_to_score(rfm_df['Frequency']))
-
-    # Monetary: Apply quantile scoring and handle Monetary == 0 as a special case
-    rfm_df['MonetaryScore'] = np.where(rfm_df['Monetary'] == 0, 0, quantile_to_score(rfm_df['Monetary']))
-
-    # Combine RFM Scores
-    rfm_df['RFMScore'] = rfm_df['RecencyScore'] + rfm_df['FrequencyScore'] + rfm_df['MonetaryScore']
-
-    # Ensure scores are filled
-    rfm_df[['RecencyScore', 'FrequencyScore', 'MonetaryScore', 'RFMScore']] = (
-        rfm_df[['RecencyScore', 'FrequencyScore', 'MonetaryScore', 'RFMScore']]
-        .fillna(0)
-    )
-    """
-    # Aggregate RFM Scores
-    rfm_df['RFMScore'] = rfm_df['RecencyScore'] + rfm_df['FrequencyScore'] + rfm_df['MonetaryScore']
-    rfm_df['RFMScore'] = rfm_df['RFMScore'].fillna(0)
+    metrics_df['RFMScore'] = metrics_df['RecencyScore'] + metrics_df['FrequencyScore'] + metrics_df['MonetaryScore']
 
     end = timer()
     timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'RFM scores complete. Execution Time: {formatted_timing}')
+    logger.info(f'Patron metrics complete. Execution Time: {timing}')
 
-    return rfm_df
+    return metrics_df
+
+
 
 """
 Function: assign_segment
@@ -512,7 +526,7 @@ Parameters:
         - 'DaysFromPenultimateEvent': Days since the customer's second-most recent event.
         - Additional columns like 'FrequentBulkBuyer', 'ChorusMember', etc.
     new_threshold (int): Maximum number of days from the first event to qualify the customer as "New".
-    returning_threshold (int): Maximum number of days since the penultimate event to qualify the customer as "Returning".
+    reengaged_threshold (int): Maximum number of days since the penultimate event to qualify the customer as "Returning".
 
 Process:
     1. **Initial Group Exclusion**: First, the function categorizes customers into specific groups that override other segmentations:
@@ -529,7 +543,7 @@ Process:
 
     3. **Segment by Recency and Frequency**: If high engagement is
 """
-def assign_segment(df, new_threshold, returning_threshold):
+def assign_segment(df, new_threshold, reengaged_threshold):
     # Initial checks for specific groups
     if df['MonetaryScore'] == 0:
         return 'Comp'
@@ -538,15 +552,15 @@ def assign_segment(df, new_threshold, returning_threshold):
 
     # Check for recency and frequency conditions
     if df['RecencyScore'] < 2:
-        return 'One&Done' if df['FrequencyScore'] <= 1 else 'Lapsed'
+        return 'One&Done' if df['Frequency'] <= 1 else 'Lapsed'
 
-    if df['RecencyScore'] <= 3 and df['FrequencyScore'] >= 2:
+    if df['RecencyScore'] <= 3 and df['Frequency'] >= 2:
         return 'Slipping'
 
     # Segment based on event timing and engagement
     if df['DaysFromFirstEvent'] <= new_threshold:
         return 'New'
-    if df['RecentEventGap'] > returning_threshold:
+    if df['RecentEventGap'] > reengaged_threshold:
         return 'Re-engaged'
     if df['RFMScore'] == 15:
         return 'Best'
@@ -562,7 +576,7 @@ def assign_segment(df, new_threshold, returning_threshold):
         return 'Come Again'
 
     # Reminder segment for moderate recency and frequency
-    if df['RecencyScore'] >= 2 and df['FrequencyScore'] >= 1:
+    if df['RecencyScore'] >= 2:
         return 'Reminder'
 
     return 'Others'
@@ -570,12 +584,12 @@ def assign_segment(df, new_threshold, returning_threshold):
 
 # Example usage:
 # df = pd.read_csv('your_data.csv')
-# result_df = assign_segment(df, new_threshold=30, returning_threshold=365)
+# result_df = assign_segment(df, new_threshold=30, reengaged_threshold=365)
 
 
 # Example usage:
 # df = pd.read_csv('your_data.csv')
-# result_df = assign_segment(df, new_threshold=30, returning_threshold=365)
+# result_df = assign_segment(df, new_threshold=30, reengaged_threshold=365)
 
 # General functions
 def safe_divide(x, y):

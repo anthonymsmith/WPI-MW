@@ -260,10 +260,8 @@ def load_sales_file(sales_file, yearsOfData, logger):
     sales_df['CreatedDate'] = pd.to_datetime(sales_df['CreatedDate'].copy(), errors='coerce')
 
     # Calculate earliest date to keep and prune earlier rows
-    logger.info(f'Starting sales size: {sales_df.shape}')
     beginning_date = datetime.now() - timedelta(days=365*yearsOfData)
     sales_df = sales_df[sales_df['CreatedDate'] > beginning_date]
-    logger.info(f'Pruned sales size: {sales_df.shape}')
 
     end = timer()
     timing = timedelta(seconds=(end - start))
@@ -325,9 +323,8 @@ def sales_initial_prep(df, Account_file, logger):
     #null_accountnames = df[df['AccountName'].isnull()]
     #logger.debug(f'List of records missing account names: {null_accountnames}')
 
-    # Assign AccountId based on whether ContactId exists
-    df['AccountId'] = df['ContactId'].where(df['ContactId'].notnull(),
-                                            df['AccountName'].apply(generate_identifier))
+    # Assign AccountId. Remember ContactId is at contact level.
+    df['AccountId'] = df['AccountName'].apply(generate_identifier)
 
     # Define a dictionary for numeric columns and their fillna values
     numeric_fillna_dict = {
@@ -951,6 +948,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
         'OrderNumber',
         'EventName',
         'EventInstance',
+        'Allocation',
         'TicketType',
         'OrderStatus',
         'TicketStatus']
@@ -1017,7 +1015,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     #Strip to final set up columns for transaction file output.
     # We're dropping patron attribute information from the transaction file, but keeping them for patron details.
     output_cols = [
-                   'AccountName','AccountId',
+                   'AccountName','AccountId','ContactId',
                    #'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'ContactEmail', 'OrderEmail',
                     'EventName','EventInstance','EventId', 'InstanceId', 'EventDate', 'EventVenue', 'EventCapacity', 'Season',
                    'Method', 'Origin', 'CreatedDate',
@@ -1130,38 +1128,69 @@ def load_anonymized_dataset(anon_data_file, logger):
     logger.info(f'Anon Dataset loaded. Execution Time: {formatted_timing}')
 
     return event_df
-6
-def add_first_latest_events(df, logger):
-    start = timer()
-    df = df.sort_values(by=['AccountId','EventDate'])
 
-    # Get the first and latest event for each 'AccountId'
+def add_key_events(df, logger):
+    from datetime import timedelta
+    from timeit import default_timer as timer
+    import numpy as np
+    import pandas as pd
+
+    start = timer()
+
+    # Log the initial state of the EventDate column
+
+    # Ensure EventDate is a datetime64 type
+    if not pd.api.types.is_datetime64_any_dtype(df['EventDate']):
+        df['EventDate'] = pd.to_datetime(df['EventDate'], errors='coerce')
+
+    # Convert EventDate to date only (remove time component)
+    df['EventDate'] = df['EventDate'].dt.date
+
+    # Sort by AccountId and EventDate
+    df = df.sort_values(by=['AccountId', 'EventDate'])
+
+    # Ensure unique events per AccountId and EventDate
+    df = df.drop_duplicates(subset=['AccountId', 'EventDate', 'EventName'])
+
+    # Helper functions for second and penultimate events
+    def get_second_event(series):
+        return series.iloc[1] if len(series) > 1 else pd.NA
+
+    def get_penultimate_event(series):
+        return series.iloc[-2] if len(series) > 1 else pd.NA
+
+    # Group by AccountId and extract key events
+    logger.info("Grouping by AccountId and extracting key events...")
     first_event_df = df.groupby('AccountId')['EventName'].first().rename('FirstEvent')
     first_event_date = df.groupby('AccountId')['EventDate'].first().rename('FirstEventDate')
+    second_event_df = df.groupby('AccountId')['EventName'].apply(get_second_event).rename('SecondEvent')
+    second_event_date = df.groupby('AccountId')['EventDate'].apply(get_second_event).rename('SecondEventDate')
+    penultimate_event_df = df.groupby('AccountId')['EventName'].apply(get_penultimate_event).rename('PenultimateEvent')
+    penultimate_event_date = df.groupby('AccountId')['EventDate'].apply(get_penultimate_event).rename('PenultimateEventDate')
     latest_event_df = df.groupby('AccountId')['EventName'].last().rename('LatestEvent')
     latest_event_date = df.groupby('AccountId')['EventDate'].last().rename('LatestEventDate')
 
+    # Combine the results into a single DataFrame
+    key_events = pd.concat(
+        [first_event_df, first_event_date,
+         second_event_df, second_event_date,
+         penultimate_event_df, penultimate_event_date,
+         latest_event_df, latest_event_date],
+        axis=1
+    ).reset_index()
 
-    # For the penultimate event, we work with a grouped object and then apply a custom function to get the penultimate values
-    def get_penultimate(series):
-        if len(series) > 1:
-            return series.iloc[-2]
-        return series.iloc[0]
+    # Log final dataframe sample
 
-    penultimate_event_df = df.groupby('AccountId')['EventName'].apply(get_penultimate).rename('PenultimateEvent')
-    penultimate_event_date = df.groupby('AccountId')['EventDate'].apply(get_penultimate).rename('PenultimateEventDate')
-
-    # Concatenate the first and latest event dataframes along the column axis
-    first_latest_events = pd.concat([first_event_df, first_event_date,
-                                     latest_event_df,latest_event_date,
-                                     penultimate_event_df,penultimate_event_date],
-                                    axis=1).reset_index()
+    # Log execution time
     end = timer()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'first/last events added: Execution Time: {formatted_timing}')
+    logger.info(f'Key events added: Execution Time: {formatted_timing}')
 
-    return first_latest_events
+    return key_events
+
+
+
 """
 Function: add_bulk_buyers
 
@@ -1239,7 +1268,7 @@ Parameters:
     patron_details_file (str): Path to the file containing existing patron details (latitude, longitude, ZIP+4, etc.).
     patron_temp_file (str): Path to a temporary file for saving the output in case of file permission issues.
     new_threshold (int): Threshold for identifying new patrons based on their first event date.
-    returning_threshold (int): Threshold for identifying returning patrons based on their event attendance gaps.
+    reengaged_threshold (int): Threshold for identifying returning patrons based on their event attendance gaps.
     logger (logging.Logger): A logger object for logging debug information, execution progress, and results.
 
 Process:
@@ -1265,7 +1294,7 @@ def get_patron_details(df,
                        patron_details_file,
                        anonymized,
                        new_threshold,
-                       returning_threshold,
+                       reengaged_threshold,
                        logger):
 
     # Change to working directory
@@ -1292,7 +1321,7 @@ def get_patron_details(df,
                     df[col] = np.nan
 
         # Define the initial set of columns needed
-        initial_columns = ['AccountName', 'AccountId',
+        initial_columns = ['AccountName', 'AccountId','ContactId',
                             'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'OrderEmail',
                             'Quantity', 'ItemPrice', 'CreatedDate', 'EventDate', 'EventName',
                             'Subscriber', 'ChorusMember', 'DuesTxn', 'Season', 'Student',
@@ -1306,11 +1335,11 @@ def get_patron_details(df,
 
         logger.debug(f'Patron Txn columns: {df.columns}')
 
-        first_latest_events = add_first_latest_events(df,logger)
+        key_events = add_key_events(df,logger)
         logger.debug(f'first_latest input shape: {df.shape}')
-        df = df.merge(first_latest_events,on='AccountId',how='left')
-        logger.debug(f'first_latest output shape: {df.shape}')
-        logger.debug(f'first_latest input columns: {df.shape}')
+        df = df.merge(key_events,on='AccountId',how='left')
+        logger.debug(f'key events output shape: {df.shape}')
+        logger.debug(f'key events input columns: {df.shape}')
 
         #logger.debug('Identifying bulk buyers...')
         logger.debug(f'bulk input shape: {df.shape}')
@@ -1329,34 +1358,34 @@ def get_patron_details(df,
         del genre_df
 
         # Calculate RFM scores
-        logger.info('Calculating RFM scores...')
-        rfm_df = mod.calculate_rfm(df.copy(), logger)
-        logger.debug(f'RFM columns: {rfm_df.columns}')
-        #logger.debug(f'Raw RFM shape: {rfm_df.shape}')
-        logger.debug(f'Raw RFM: {rfm_df.head}')
+        logger.info('Calculating Patron metrics...')
+        metrics_df = mod.calculate_patron_metrics(df.copy(), logger)
+        logger.debug(f'Patron metrics columns: {metrics_df.columns}')
+        #logger.debug(f'Raw RFM shape: {metrics_df.shape}')
+        logger.debug(f'Raw Patron Metrics: {metrics_df.head}')
 
         # add Customer Lifetime Value
         # Not ready for primetime. Needs to account for dormant patrons.
-        rfm_df = calculate_CLV_score(rfm_df, logger)
+        metrics_df = calculate_CLV_score(metrics_df, logger)
         #logger.debug(f'CLV added')
 
         # plots
-        #R = rfm_df['RecencyZ']
-        LogF = np.log10(rfm_df['Frequency'] + .01)
-        LogM = np.log10(rfm_df['Monetary'] + .01)
-        #G = np.log10(rfm_df['GrowthZ'] + .01)
+        #R = metrics_df['RecencyZ']
+        #LogF = np.log10(metrics_df['Frequency'] + .01)
+        #LogM = np.log10(metrics_df['Monetary'] + .01)
+        #LogG = np.log10(metrics_df['GrowthScore'] + .01)
 
-        #plot_3D_scatter(rfm_df['RecencyZ'],'RecencyZ',rfm_df['FrequencyZ'],'Frequency Z',rfm_df['MonetaryZ'],'Monetary Z',logger)
-        plot_3D_scatter(rfm_df['Recency'],'Recency',LogF,'Log Frequency',rfm_df['GrowthScore'],'Growth',logger)
+        #plot_3D_scatter(metrics_df['RecencyZ'],'RecencyZ',metrics_df['FrequencyZ'],'Frequency Z',metrics_df['MonetaryZ'],'Monetary Z',logger)
+        #plot_3D_scatter(metrics_df['Recency'],'Recency',LogF,'Log Frequency',LogG,'Log Growth',logger)
         #plot_3D_scatter(R,'Recency',F,'log Frequency',M,'log Monetary',logger)
-        #plot_3D_scatter(rfm_df['Recency'],'Recency',rfm_df['Frequency'],'Frequency',rfm_df['GrowthScore'],'Growth',logger)
+        #plot_3D_scatter(metrics_df['Recency'],'Recency',metrics_df['Frequency'],'Frequency',metrics_df['GrowthScore'],'Growth',logger)
 
         logger.debug('Calculating patron segments...')
-        rfm_df['Segment'] = rfm_df.apply(mod.assign_segment, args=(new_threshold,returning_threshold), axis=1)
+        metrics_df['Segment'] = metrics_df.apply(mod.assign_segment, args=(new_threshold,reengaged_threshold), axis=1)
 
-        logger.debug(f'final patron model shape: {rfm_df.shape}')
-        logger.debug(f'final patron model columns: {rfm_df.columns}')
-        ##logger.debug(f'Final rfm_df: {rfm_df.head}')
+        logger.debug(f'final patron model shape: {metrics_df.shape}')
+        logger.debug(f'final patron model columns: {metrics_df.columns}')
+        ##logger.debug(f'Final metrics_df: {metrics_df.head}')
 
         # Modeling is complete so we can prune transaction columns.
         # Keep the most recent entry for each 'AccountId'
@@ -1368,11 +1397,11 @@ def get_patron_details(df,
         logger.debug(f'Last Entry shape: {last_entry_df.shape}')
 
         #final prep
-        keep_columns = ['AccountName','AccountId','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State', 'ZIP',
+        keep_columns = ['AccountName','AccountId','ContactId','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State', 'ZIP',
                         #'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
                         'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BrassScore',
                         'PreferredGenre','PreferenceConfidence','Omni','Entropy',
-                        'FirstEvent', 'FirstEventDate','LatestEvent','LatestEventDate', 'PenultimateEvent', 'PenultimateEventDate', 'LatestSeason'
+                        'FirstEvent', 'FirstEventDate','SecondEvent', 'SecondEventDate','PenultimateEvent', 'PenultimateEventDate', 'LatestEvent','LatestEventDate', 'LatestSeason'
                         ]
 
         last_entry_df = last_entry_df[keep_columns]
@@ -1380,7 +1409,7 @@ def get_patron_details(df,
         logger.debug('Merging RFM scores with the processed patron data...')
         logger.debug(f'last entry pre-merge shape: {last_entry_df.shape}')
 
-        df = last_entry_df.merge(rfm_df, on='AccountId', how='left').sort_values(by=['MonetaryScore','FrequencyScore','RecencyScore'], ascending=False)
+        df = last_entry_df.merge(metrics_df, on='AccountId', how='left').sort_values(by=['MonetaryScore','FrequencyScore','RecencyScore'], ascending=False)
         logger.debug(f'pre-location shape: {df.shape}')
         logger.debug(f'pre-location columns: {df.columns}')
         logger.debug(f'pre-location df: {df.head}')
