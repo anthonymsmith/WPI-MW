@@ -1,5 +1,3 @@
-#%%
-#%%
 """
 Copyright (c) Nolichucky Associates 2024. All Rights Reserved.
 
@@ -415,7 +413,7 @@ Process:
 Returns:
     pd.DataFrame: The processed DataFrame with updated venue names and additional columns for customer attributes ('ChorusMember', 'DuesTxn', 'Student', 'Subscriber').
 """
-def venue_and_attribute_processing(sales_df, chorus_list_file, logger):
+def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logger):
     start = timer()
     logger.debug(f'Sales columns: {sales_df.columns}')
 
@@ -438,6 +436,24 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, logger):
     logger.debug(f'ChorusMember column added: {sales_df["ChorusMember"].head()}')
     logger.debug(f'sales_df shape: {sales_df.shape}')
 
+    # Load the chorus member list and drop missing AccountNames in one step
+    board_df = pd.read_csv(board_file).dropna()
+
+    # Parse 'AccountName' into 'FirstName' and 'LastName'
+    if 'AccountName' in board_df.columns:
+        board_df[['FirstName', 'LastName']] = board_df['AccountName'].str.split(pat=' ', n=1, expand=True)
+
+    # Merge the two DataFrames on FirstName and LastName
+    sales_df = sales_df.merge(board_df[['FirstName', 'LastName', 'PatronStatus']],
+                               on=['FirstName', 'LastName'], how='left')
+
+    # Add a new column for the state or 'patron' if not matched
+    sales_df['PatronStatus'] = sales_df['PatronStatus'].fillna('patron')
+
+    # Debug logs
+    logger.debug(f'Board member column added: {sales_df.columns}')
+    logger.debug(f'sales_df shape: {sales_df.shape}')
+
     # Now add a field for any Accounts who bought a ticket with a DUES coupon
     sales_df['DuesTxn'] = sales_df['DiscountCode'].str.contains("Chorus Dues", na=False)
 
@@ -450,7 +466,7 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, logger):
     # Add Subscriber field based on subscription practice.
     sales_df['Subscriber'] = sales_df['EventName_sales'].str.contains("Subscription", na=False)
 
-    logger.debug(sales_df.head)
+    logger.debug(f'Venue and Attribute columns: {sales_df.columns}')
 
     end = timer()
     timing = timedelta(seconds=(end - start))
@@ -1023,7 +1039,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
                    'EventStatus', 'EventType', 'EventClass', 'EventGenre', 'EventSubGenre',
                    'Quantity', 'ItemPrice', 'TicketTotal', 'PriceLevel', 'AmountPaid', 'DonationName', 'DonationAmount',#'Total',
                    'DiscountCode', 'DiscountTotal', 'PreDiscountTotal', 'UnitDiscount', 'UnitDiscountType',
-                   'ChorusMember','DuesTxn','Student','Subscriber',
+                   'ChorusMember','DuesTxn','Student','Subscriber','PatronStatus',
                    'Choral','Brass','Classical', 'Contemporary', 'Dance'
                    ]
 
@@ -1034,7 +1050,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     output_df.to_csv(output_file, index=False)
     logger.debug(f'full results written.')
 
-    PII_columns = ['AccountName','DonationName']
+    PII_columns = ['AccountName','DonationName','PatronStatus']
     anon_df = output_df.drop(PII_columns, axis=1)
     anon_df.to_csv('anon_' + output_file, index=False)
     logger.debug(f'PII safe Output written. {anon_df.columns}')
@@ -1324,7 +1340,7 @@ def get_patron_details(df,
         initial_columns = ['AccountName', 'AccountId','ContactId',
                             'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'OrderEmail',
                             'Quantity', 'ItemPrice', 'CreatedDate', 'EventDate', 'EventName',
-                            'Subscriber', 'ChorusMember', 'DuesTxn', 'Season', 'Student',
+                            'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn', 'Season', 'Student',
                             'EventGenre', 'Choral', 'Brass', 'Classical', 'Contemporary', 'Dance']
 
         # Select only the relevant columns from the DataFrame
@@ -1398,7 +1414,7 @@ def get_patron_details(df,
 
         #final prep
         keep_columns = ['AccountName','AccountId','ContactId','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State', 'ZIP',
-                        #'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
+                        'PatronStatus',#'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
                         'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BrassScore',
                         'PreferredGenre','PreferenceConfidence','Omni','Entropy',
                         'FirstEvent', 'FirstEventDate','SecondEvent', 'SecondEventDate','PenultimateEvent', 'PenultimateEventDate', 'LatestEvent','LatestEventDate', 'LatestSeason'
