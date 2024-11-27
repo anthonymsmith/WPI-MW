@@ -244,7 +244,7 @@ def load_sales_file(sales_file, yearsOfData, logger):
         'Pre-Discount Total': 'PreDiscountTotal',
         'Unit Discount Amount': 'UnitDiscount',
         'Unit Discount Type': 'UnitDiscountType',
-        'Ticket Order: Email': 'OrderEmail',
+        'Ticket Order: Email': 'Email',
         'Contact: Email': 'ContactEmail',
         # 'Contact: Email' is redundant and deleted
         'Created Date': 'CreatedDate', # This is really the order modified date.
@@ -464,7 +464,22 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
     sales_df['Student'] = sales_df['TicketType'].str.contains("Student", na=False)
 
     # Add Subscriber field based on subscription practice.
-    sales_df['Subscriber'] = sales_df['EventName_sales'].str.contains("Subscription", na=False)
+    #print(sales_df[sales_df['EventName_sales'].str.contains("Subscription", case=False, na=False)])
+
+    sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
+    sales_df['Subscriber'] = sales_df['EventName_sales'].str.strip().str.contains("subscri", case=False, na=False)
+
+    # Log cases where Subscriber == True or unexpected values
+    for index, row in sales_df.iterrows():
+        #if row['Subscriber'] == True:
+        #    logger.debug(f"Subscriber detected: AccountName: {row['AccountName']}, "
+        #                 f"Subscriber status: {row['Subscriber']}, "
+        #                 f"EventName_sales: {row['EventName_sales']}")
+        if row['Subscriber'] not in [True, False]:  # Check for unexpected values
+            logger.debug(f"Neither True nor False: AccountName: {row['AccountName']}, "
+                         f"Subscriber status: {row['Subscriber']}")
+
+    logger.debug(f'Subscriber initial totals: {sales_df["Subscriber"].value_counts()}')
 
     logger.debug(f'Venue and Attribute columns: {sales_df.columns}')
 
@@ -510,8 +525,10 @@ def genre_counts(df, logger):
     # Fill NaN values in 'EventGenre' with a placeholder
     df['EventGenre'].fillna('None', inplace=True)
 
-    # only consider live or virtual events. Exclude suscriptions, test, etc. from genre counts.
-    df1 = df[df['EventType'].isin(['Live', 'Virtual'])]
+    # only consider live or virtual events. Exclude test, etc. from genre counts.
+    df1 = df[df['EventType'].isin(['Live', 'Virtual','Subscriptions'])]
+
+    logger.debug(f'Subscriber totals before genre merge: {df["Subscriber"].value_counts()}')
 
     # First remove duplicate events for each AccountId and EventGenre
     unique_events_df = df1.drop_duplicates(subset=['AccountId', 'EventGenre', 'EventId'])
@@ -528,6 +545,8 @@ def genre_counts(df, logger):
     # Merge the original DataFrame with the pivoted genre DataFrame
     logger.debug(f'Genre pre merge: {df.shape}')
     merged_df = df.merge(genre_df, on='AccountId', how='left')
+    logger.debug(f'Subscriber totals after genre merge: {df["Subscriber"].value_counts()}')
+
     logger.debug(f'Genre post merge: {df.shape}')
     logger.debug(f'Sales columns: {df.columns}')
     logger.debug(f'genre columns: {genre_df.columns}')
@@ -911,6 +930,8 @@ def combine_sales_and_events(sales_df, event_df, logger):
     logger.debug(f'Raw Results:')
     logger.debug(se_df.shape)
 
+    logger.debug(f'Subscriber totals after event merge: {se_df["Subscriber"].value_counts()}')
+
     end = timer()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
@@ -955,6 +976,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # Clean up Event Types:
     df['EventType'] = df['EventType'].str.title()
     logger.debug(f'Columns before final aggregation {df.columns}')
+    logger.debug(f'Subscriber totals before final aggregation: {df["Subscriber"].value_counts()}')
 
     # aggregate individual records to the lowest unique set.
     # Assumes each order (Order Number, CreatedDate) can contain = multiple Events and quantities
@@ -980,21 +1002,29 @@ def final_processing_and_output(df, output_file, logger, processDonations):
         'Total': 'sum',
         'DiscountTotal': 'sum',
         'PreDiscountTotal': 'sum',
-        'UnitDiscount': 'sum'}
+        'UnitDiscount': 'sum',
+        'Subscriber': 'max',
+        'ChorusMember': 'max',
+        'DuesTxn': 'max',
+        'Student': 'max'}
 
     # and use latest record for any columns using the 'last' aggregation
     df = df.sort_values(by=['CreatedDate'])
-    logger.debug(f'Sales aggregation created')
+    logger.info(f'starting sales aggregation')
+
 
     for col in df.columns:
         # Check if the column is not in the groupby_cols and agg_dict
         if col not in groupby_cols and col not in agg_dict:
-            # If not, add it to the agg_dict using 'first' chronologically
-            agg_dict[col] = 'first'
+            # If not, add it to the agg_dict using 'max'
+            agg_dict[col] = 'last'
 
     # aggregate to the min unique set of records for our purposes.
     df = df.groupby(groupby_cols).agg(agg_dict).reset_index()
-    logger.debug(f'Sales aggregation complete')
+
+    logger.info(f'Sales aggregation complete')
+    logger.debug(f'Subscriber totals after final aggregation: {df["Subscriber"].value_counts()}')
+
     logger.debug(df.shape)
 
     # Now calculate totals
@@ -1024,7 +1054,8 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     df.loc[indices_to_zero, 'DonationAmount'] = 0
     logger.debug(f'Donation handling complete.')
 
-    # TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
+
+# TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
 
     #df['NetTxn'] = df['TicketTotal'] + df['DonationAmount']
 
@@ -1032,7 +1063,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # We're dropping patron attribute information from the transaction file, but keeping them for patron details.
     output_cols = [
                    'AccountName','AccountId','ContactId',
-                   #'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'ContactEmail', 'OrderEmail',
+                   #'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'ContactEmail', 'Email',
                     'EventName','EventInstance','EventId', 'InstanceId', 'EventDate', 'EventVenue', 'EventCapacity', 'Season',
                    'Method', 'Origin', 'CreatedDate',
                    'OrderNumber', 'TicketStatus', 'OrderStatus', 'Allocation', 'TicketType','OrderSource',
@@ -1046,6 +1077,8 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # write results to output file for only output columns.
     output_df = df[output_cols]
     logger.debug(f'Sales Output Columns:{output_df.columns}')
+
+    logger.debug(f'Subscriber totals after final processing: {df["Subscriber"].value_counts()}')
 
     output_df.to_csv(output_file, index=False)
     logger.debug(f'full results written.')
@@ -1099,30 +1132,33 @@ def region_processing(df, filename, logger):
 def add_regions(df, regions_file, logger):
     start = timer()
 
-    # add in ZIP-Region Assignments
-    raw_regions_df = pd.read_csv(regions_file, dtype={'PHYSICAL ZIP': str,'ZIP': str})
+    # Load the regions file with appropriate data types
+    raw_regions_df = pd.read_csv(regions_file, dtype={'PHYSICAL ZIP': str, 'ZIP': str})
 
-    # Extract the first 5 digits of the ZIP code and add leading zeros if necessary
+    # Normalize ZIP codes: take the first 5 digits and pad with leading zeros if necessary
     raw_regions_df['ZIP'] = raw_regions_df['ZIP'].str[:5].str.zfill(5)
-    raw_regions_df = raw_regions_df[['ZIP','RegionAssignment']].drop_duplicates()
 
-    #regions_df = raw_regions_df.groupby('ZIP',as_index=False).first()
-    regions_df = raw_regions_df
-    # strip ZIP+4
-    # regions_df['ZIP'] = regions_df['ZIP'].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].str[:5].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].apply(lambda x: '{0:0>5}'.format(x))
+    # Deduplicate based on ZIP and RegionAssignment to handle inconsistent ZIP-to-region mappings
+    raw_regions_df = raw_regions_df[['ZIP', 'RegionAssignment']].drop_duplicates()
+
+    # Handle potential duplicate ZIP codes by keeping the latest or most consistent assignment
+    regions_df = (
+        raw_regions_df
+        .sort_values(by=['ZIP', 'RegionAssignment'])  # Sort if needed (customize as necessary)
+        .drop_duplicates(subset='ZIP', keep='first')  # Drop duplicates, keeping the first assignment
+    )
 
     logger.debug(regions_df)
     logger.debug(regions_df.shape)
     logger.debug(regions_df.drop_duplicates().shape)
 
-    logger.debug(f'regions pre merge: {df.shape}')
+    logger.debug(f'Regions pre merge: {df.shape}')
 
+    # Merge the regions DataFrame with the original DataFrame on ZIP codes
     dr_df = df.merge(regions_df, on='ZIP', how='left')
 
-    logger.debug(f'regions post merge: {dr_df.shape}')
-    logger.debug(f'Results With regions {dr_df.columns}')
+    logger.debug(f'Regions post merge: {dr_df.shape}')
+    logger.debug(f'Results with regions {dr_df.columns}')
 
     end = timer()
     timing = timedelta(seconds=(end - start))
@@ -1162,11 +1198,16 @@ def add_key_events(df, logger):
     # Convert EventDate to date only (remove time component)
     df['EventDate'] = df['EventDate'].dt.date
 
+    # Only consider actual events, not subscriptions.
+    #todo: gotta fix this!!!!!!
+    df = df[df['EventStatus'].isin(['Complete', 'Future'])]
+
     # Sort by AccountId and EventDate
     df = df.sort_values(by=['AccountId', 'EventDate'])
 
     # Ensure unique events per AccountId and EventDate
     df = df.drop_duplicates(subset=['AccountId', 'EventDate', 'EventName'])
+
 
     # Helper functions for second and penultimate events
     def get_second_event(series):
@@ -1320,25 +1361,27 @@ def get_patron_details(df,
         # Preprocess the data
         logger.debug('Preprocessing patron data...')
 
+        logger.debug(f'Subscriber totals before patron details: {df["Subscriber"].value_counts()}')
+
         df['EventDate'] = pd.to_datetime(df['EventDate'].copy(), errors='coerce')
 
         # only keep Live or Virtual that either completed or are planned. No subscriptions, cancelled, test, etc.
-        df = df[df['EventType'].isin(['Live'])]
-        df = df[df['EventStatus'].isin(['Complete', 'Future'])]
+        df = df[df['EventStatus'].isin(['Complete', 'Future','Subscription'])]
+        #df = df[df['EventType'].isin(['Live','Virtual'])]
         logger.debug(f'initial patron Txn columns: {df.columns}')
 
         # # Set PII columns to Nan. We only do this now so that debugging modeling code doesn't include them.
         if anonymized == True:
             # Note Region is inherited from previous non-anonymized runs.
-            PII_columns = ['AccountName','FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'OrderEmail']
+            PII_columns = ['AccountName','FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'Email']
             # Set the values in the PII columns to NaN where those columns exist in the DataFrame
             for col in PII_columns:
                 if col not in df.columns:
                     df[col] = np.nan
 
         # Define the initial set of columns needed
-        initial_columns = ['AccountName', 'AccountId','ContactId',
-                            'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'OrderEmail',
+        initial_columns = ['AccountName', 'AccountId','ContactId','EventStatus',
+                            'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'Email',
                             'Quantity', 'ItemPrice', 'CreatedDate', 'EventDate', 'EventName',
                             'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn', 'Season', 'Student',
                             'EventGenre', 'Choral', 'Brass', 'Classical', 'Contemporary', 'Dance']
@@ -1348,6 +1391,8 @@ def get_patron_details(df,
 
         df = df.sort_values(['AccountId', 'CreatedDate'])
         df = df.rename(columns={'Season':'LatestSeason'})
+
+        logger.debug(f'Subscriber totals for filtered fpatron details: {df["Subscriber"].value_counts()}')
 
         logger.debug(f'Patron Txn columns: {df.columns}')
 
@@ -1373,7 +1418,9 @@ def get_patron_details(df,
         logger.debug(f'Genre columns: {df.columns}')
         del genre_df
 
-        # Calculate RFM scores
+        logger.debug(f'Subscriber passed into Calc: {df["Subscriber"].value_counts()}')
+
+        # Calculate patron metrics
         logger.info('Calculating Patron metrics...')
         metrics_df = mod.calculate_patron_metrics(df.copy(), logger)
         logger.debug(f'Patron metrics columns: {metrics_df.columns}')
@@ -1413,7 +1460,7 @@ def get_patron_details(df,
         logger.debug(f'Last Entry shape: {last_entry_df.shape}')
 
         #final prep
-        keep_columns = ['AccountName','AccountId','ContactId','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State', 'ZIP',
+        keep_columns = ['AccountName','AccountId','ContactId','FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
                         'PatronStatus',#'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
                         'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BrassScore',
                         'PreferredGenre','PreferenceConfidence','Omni','Entropy',
@@ -1432,7 +1479,7 @@ def get_patron_details(df,
 
         # remove PII for anonymized output
         anon_df = df.copy()
-        PII_columns = ['AccountName','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State']
+        PII_columns = ['AccountName','FirstName', 'LastName', 'Email', 'Address', 'City', 'State']
         anon_df.drop(PII_columns, axis=1, inplace=True)
         logger.debug(f'Anon Patron columns: {anon_df.columns}')
         logger.debug(f'Anon Patron shape: {anon_df.shape}')

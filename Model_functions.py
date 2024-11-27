@@ -331,7 +331,9 @@ def calculate_patron_metrics(df, logger):
     start = timer()
     today = datetime.today()
 
-    # Convert date columns to datetime
+    logger.debug(f'Subscriber read into Calc: {df["Subscriber"].value_counts()}')
+
+# Convert date columns to datetime
     date_columns = ['FirstEventDate', 'LatestEventDate', 'PenultimateEventDate', 'SecondEventDate', 'CreatedDate']
     for col in date_columns:
         if col in df.columns:
@@ -383,9 +385,15 @@ def calculate_patron_metrics(df, logger):
         df['Recency'] = df['DaysFromLatestEvent']
 
     # Ensure Recency is numeric before further processing
-    df['Recency'] = pd.to_numeric(df['Recency'], errors='coerce')
-    df['Recency'] = df['Recency'].fillna(float('inf'))  # Replace NaN with infinity for binning
-    df['Recency'] = df['Recency'].clip(lower=0)
+    # Clip to between 4000 and 0 for binning.
+    df['Recency'] = (
+        pd.to_numeric(df['Recency'], errors='coerce')  # Ensure numeric
+        .fillna(4000)                                  # Replace NaN with 4000
+        .clip(lower=0, upper=4000)                     # Clip values between 0 and 4000
+    )
+
+    recency_stats = df['Recency'].describe()
+    logger.debug(f'Recency stats raw: {recency_stats}')
 
 # Calculate Lifespan
     logger.info("Calculating Lifespan...")
@@ -435,6 +443,11 @@ def calculate_patron_metrics(df, logger):
     logger.info("Calculating Regularity...")
     df = calculate_regularity(df, logger)
 
+    logger.debug(f'Subscriber before aggregation: {df["Subscriber"].value_counts()}')
+
+    bool_columns = ['Subscriber', 'ChorusMember', 'DuesTxn', 'FrequentBulkBuyer', 'Student']
+    df[bool_columns] = df[bool_columns].fillna(False).astype(bool)
+
     # Merge back into metrics
     metrics_df = df.groupby('AccountId').agg({
         'Recency': 'min',
@@ -446,12 +459,14 @@ def calculate_patron_metrics(df, logger):
         'DaysFromPenultimateEvent': 'min',
         'ClusterFrequency': 'max',
         'Regularity': 'max',
-        'Subscriber': 'last',
-        'ChorusMember': 'last',
-        'DuesTxn': 'last',
-        'FrequentBulkBuyer': 'last',
-        'Student': 'last'
+        'Subscriber': 'max',
+        'ChorusMember': 'max',
+        'DuesTxn': 'max',
+        'FrequentBulkBuyer': 'max',
+        'Student': 'max'
     }).reset_index()
+
+    logger.debug(f'Subscriber after aggregation: {metrics_df["Subscriber"].value_counts()}')
 
     metrics_df = metrics_df.merge(growth_scores, on='AccountId', how='left')
     metrics_df = metrics_df.merge(aym_df[['AccountId', 'AYM']], on='AccountId', how='left')
@@ -472,19 +487,11 @@ def calculate_patron_metrics(df, logger):
     # Apply binning for RFM scores
     # Ensure Recency is numeric and clean
     logger.info("Preparing Recency for binning...")
-    try:
-        metrics_df['Recency'] = pd.to_numeric(metrics_df['Recency'], errors='coerce')  # Convert to numeric
-
-        # Replace NaN with infinity to assign them to the last bin
-        metrics_df['Recency'] = metrics_df['Recency'].fillna(float('inf'))
 
         # Apply Recency binning
-        bins = [0, 120, 400, 700, 1500, 2000, float('inf')]
-        labels = [5, 4, 3, 2, 1, 0]
-        metrics_df['RecencyScore'] = pd.cut(metrics_df['Recency'], bins=bins, labels=labels, right=False).astype(int)
-    except Exception as e:
-        logger.error(f"Error during RecencyScore binning: {e}")
-        raise
+    bins = [0, 120, 400, 700, 1500, 2000, float('inf')]
+    labels = [5, 4, 3, 2, 1, 0]
+    metrics_df['RecencyScore'] = pd.cut(metrics_df['Recency'], bins=bins, labels=labels, right=False).astype(int)
 
     bins = [0, 1, 3, 5, 8, 11, float('inf')]
     labels = [0, 1, 2, 3, 4, 5]
