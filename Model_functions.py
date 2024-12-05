@@ -125,7 +125,7 @@ def calculate_genre_scores(df, logger):
     genre_df['Entropy'] = genre_df.drop(columns=['AccountId', 'Frequency']).apply(calculate_entropy, axis=1)
 
     # Invert entropy to quantify the strength of preference (higher entropy means weaker preference)
-    genre_df['RawPreferenceStrength'] = 1 / (1 + genre_df['Entropy'])
+    genre_df['RawPreferenceStrength'] = 1 / (.6 + genre_df['Entropy']) # peaks below 2
 
     # Determine the preferred genre (the one with the highest normalized percentage)
     def get_preferred_genre(row):
@@ -137,16 +137,22 @@ def calculate_genre_scores(df, logger):
     genre_df.columns = [col + 'Score' if col not in ['AccountId', 'PreferredGenre', 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col for col in genre_df.columns]
 
     # Set 'Omni' flag based on entropy threshold
-    entropy_threshold = 1  # Define your entropy threshold for omnivores
+    entropy_threshold = 1.6  # Define your entropy threshold for omnivores
     genre_df['Omni'] = genre_df['Entropy'] > entropy_threshold
 
     # Linear scaling of preference strength based on the total number of events attended
     max_events = genre_df['Frequency'].max()
 
-    genre_df['Confidence'] = np.log1p(genre_df['Frequency']) / np.log1p(max_events)
+    genre_df['EventCountWeighting'] = np.log1p(1 + genre_df['Frequency']) / np.log1p(1 + max_events)
+    #genre_df['EventCountWeighting'] = genre_df['Frequency'] / max_events
 
     # Adjust PreferenceStrength using the confidence metric
-    genre_df['PreferenceConfidence'] = genre_df['RawPreferenceStrength'] * genre_df['Confidence']
+    # Cap PreferenceConfidence to a maximum of 100
+    genre_df['PreferenceConfidence'] = np.clip(
+        genre_df['RawPreferenceStrength'] * genre_df['EventCountWeighting'] * 100,
+        a_min=0,  # Minimum allowed value
+        a_max=100 # Maximum allowed value
+    )
 
     end = timer()
     timing = timedelta(seconds=(end - start))
@@ -365,8 +371,8 @@ def calculate_patron_metrics(df, logger):
         )
         df['DaysFromPenultimateEvent'] = df['DaysFromPenultimateEvent'].clip(lower=0)
 
-    # Calculate DaysFromFirstEvent
-    logger.info("Calculating DaysFromFirstEvent...")
+    # Calculate MonthsFromFirstEvent
+    logger.info("Calculating MonthsFromFirstEvent...")
     if 'FirstEventDate' in df.columns:
         df['DaysFromFirstEvent'] = (
             (today - df['FirstEventDate'])
@@ -445,8 +451,8 @@ def calculate_patron_metrics(df, logger):
 
     logger.debug(f'Subscriber before aggregation: {df["Subscriber"].value_counts()}')
 
-    bool_columns = ['Subscriber', 'ChorusMember', 'DuesTxn', 'FrequentBulkBuyer', 'Student']
-    df[bool_columns] = df[bool_columns].fillna(False).astype(bool)
+    #bool_columns = ['ChorusMember', 'DuesTxn', 'FrequentBulkBuyer', 'Student']
+    #df[bool_columns] = df[bool_columns].fillna(False).astype(bool)
 
     # Merge back into metrics
     metrics_df = df.groupby('AccountId').agg({
@@ -466,7 +472,10 @@ def calculate_patron_metrics(df, logger):
         'Student': 'max'
     }).reset_index()
 
+    #metrics_df = metrics_df.merge(subscription_status, on='AccountId', how='left')
     logger.debug(f'Subscriber after aggregation: {metrics_df["Subscriber"].value_counts()}')
+    metrics_df['Subscriber'] = metrics_df['Subscriber'].astype(int).replace({0: 'never', 1: 'previous', 2: 'current'})
+    logger.debug(f'Subscriber after conversion: {metrics_df["Subscriber"].value_counts()}')
 
     metrics_df = metrics_df.merge(growth_scores, on='AccountId', how='left')
     metrics_df = metrics_df.merge(aym_df[['AccountId', 'AYM']], on='AccountId', how='left')
@@ -479,9 +488,8 @@ def calculate_patron_metrics(df, logger):
     metrics_df['AYM'].fillna(0, inplace=True)
     metrics_df['Regularity'].fillna(0, inplace=True)
     metrics_df['DaysFromFirstEvent'].fillna(3600, inplace=True)
-
     # Calculate additional metrics
-    metrics_df['RecentEventGap'] = metrics_df['DaysFromPenultimateEvent'] - metrics_df['Recency']
+    metrics_df['RecentEventYearsGap'] = (metrics_df['DaysFromPenultimateEvent'] - metrics_df['Recency'])/365
     metrics_df['Engagement'] = safe_divide(metrics_df['Frequency'], metrics_df['DaysFromFirstEvent'])
 
     # Apply binning for RFM scores
@@ -567,36 +575,23 @@ def assign_segment(df, new_threshold, reengaged_threshold):
     # Segment based on event timing and engagement
     if df['DaysFromFirstEvent'] <= new_threshold:
         return 'New'
-    if df['RecentEventGap'] > reengaged_threshold:
+    if df['RecentEventYearsGap'] > reengaged_threshold:
         return 'Re-engaged'
     if df['RFMScore'] == 15:
         return 'Best'
 
     # High engagement and subscriber potential
     if df['RecencyScore'] >= 4 and df['FrequencyScore'] >= 4:
-        return 'Potential Subscriber' if df['Subscriber'] != 'True' else 'High'
-
+        return 'High'
     # Recency and Frequency based segments for remaining cases
     if df['RecencyScore'] >= 3 and df['FrequencyScore'] >= 2:
         return 'Upsell'
     if df['RecencyScore'] >= 3:
         return 'Come Again'
-
     # Reminder segment for moderate recency and frequency
     if df['RecencyScore'] >= 2:
         return 'Reminder'
-
     return 'Others'
-
-
-# Example usage:
-# df = pd.read_csv('your_data.csv')
-# result_df = assign_segment(df, new_threshold=30, reengaged_threshold=365)
-
-
-# Example usage:
-# df = pd.read_csv('your_data.csv')
-# result_df = assign_segment(df, new_threshold=30, reengaged_threshold=365)
 
 # General functions
 def safe_divide(x, y):

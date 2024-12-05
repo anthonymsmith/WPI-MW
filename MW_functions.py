@@ -466,18 +466,15 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
     # Add Subscriber field based on subscription practice.
     #print(sales_df[sales_df['EventName_sales'].str.contains("Subscription", case=False, na=False)])
 
+    # Ensure EventName_sales is treated as a string
     sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
-    sales_df['Subscriber'] = sales_df['EventName_sales'].str.strip().str.contains("subscri", case=False, na=False)
 
-    # Log cases where Subscriber == True or unexpected values
-    for index, row in sales_df.iterrows():
-        #if row['Subscriber'] == True:
-        #    logger.debug(f"Subscriber detected: AccountName: {row['AccountName']}, "
-        #                 f"Subscriber status: {row['Subscriber']}, "
-        #                 f"EventName_sales: {row['EventName_sales']}")
-        if row['Subscriber'] not in [True, False]:  # Check for unexpected values
-            logger.debug(f"Neither True nor False: AccountName: {row['AccountName']}, "
-                         f"Subscriber status: {row['Subscriber']}")
+    # Define a helper function to determine the subscription status for each AccountId
+    sales_df['Subscriber'] = sales_df['EventName_sales'].apply(
+        lambda x: 2 if '2024-2025' in x.lower() or '24-25' in x.lower() else (
+            1 if 'subscri' in x.lower() else 0
+        )
+    )
 
     logger.debug(f'Subscriber initial totals: {sales_df["Subscriber"].value_counts()}')
 
@@ -694,7 +691,7 @@ def state_and_city_processing(sales_df, logger):
             r'1543|Rutalnd': 'Rutland',
             r'Sherb.*': 'Sherborn',
             r'Southboro.*': 'Southborough',
-            r'Shrew.*': 'Shrewsbury',
+            r'Shre.*': 'Shrewsbury',
             r'Stow.*': 'Stow',
             r'Sturb.*': 'Sturbridge',
             r'Surtton|Suttom': 'Sutton',
@@ -1093,6 +1090,8 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Final sales results written to file: {output_file}. Execution Time: {formatted_timing}')
 
+    logger.debug(f'final processing return df columns:{df.columns}')
+
     return df # the full data frame is needed for Patron details
 """
 def region_processing(df, filename, logger):
@@ -1252,7 +1251,8 @@ def add_key_events(df, logger):
 Function: add_bulk_buyers
 
 Description:
-    This function identifies and flags "bulk buyers" and "frequent bulk buyers" based on the number of tickets purchased for events. It adds two new columns, 'BulkBuyer' and 'FrequentBulkBuyer', to the DataFrame, indicating accounts that have made large purchases and accounts that frequently make large purchases across multiple events.
+    This function identifies and flags "bulk buyers" and "frequent bulk buyers" based on the number of tickets purchased for events. 
+    It adds two new columns, 'BulkBuyer' and 'FrequentBulkBuyer', to the DataFrame, indicating accounts that have made large purchases and accounts that frequently make large purchases across multiple events.
 
 Parameters:
     df (pd.DataFrame): A DataFrame containing event data, including columns like 'AccountId', 'EventName', and 'Quantity'.
@@ -1278,7 +1278,7 @@ def add_bulk_buyers(df, logger):
     start = timer()
 
     bulk_threshold = 12
-    event_count_threshold = 3
+    event_count_threshold = 4
 
     # Gather event quantities for all accounts
     grouped = df.groupby(['AccountId', 'EventName'])['Quantity'].sum().reset_index()
@@ -1322,7 +1322,7 @@ Parameters:
     RFMScoreThreshold (int): The threshold above which a patron's RFM score is considered for geolocation updates.
     GetLatLong (bool): A flag indicating whether to update latitude, longitude, and ZIP+4 for missing values.
     regions_file (str): Path to the file containing region mapping data.
-    patron_details_file (str): Path to the file containing existing patron details (latitude, longitude, ZIP+4, etc.).
+    patrons_file (str): Path to the file containing existing patron details (latitude, longitude, ZIP+4, etc.).
     patron_temp_file (str): Path to a temporary file for saving the output in case of file permission issues.
     new_threshold (int): Threshold for identifying new patrons based on their first event date.
     reengaged_threshold (int): Threshold for identifying returning patrons based on their event attendance gaps.
@@ -1348,7 +1348,7 @@ def get_patron_details(df,
                        RFMScoreThreshold,
                        GetLatLong,
                        regions_file,
-                       patron_details_file,
+                       patrons_file,
                        anonymized,
                        new_threshold,
                        reengaged_threshold,
@@ -1477,13 +1477,25 @@ def get_patron_details(df,
         logger.debug(f'pre-location columns: {df.columns}')
         logger.debug(f'pre-location df: {df.head}')
 
+        # convert Days to Months
+        # List of columns to convert
+        columns_to_convert = ['DaysFromFirstEvent', 'DaysToReturn', 'DaysFromPenultimateEvent']
+
+        # Convert days to months (assuming 30 days in a month) and rename columns
+        for column in columns_to_convert:
+            df[column] = df[column] / 30.4  # Convert to months
+            df.rename(columns={column: column.replace('Days', 'Months')}, inplace=True)
+
+        df['Recency'] = df['Recency']/30.4
+        df.rename(columns={'Recency': 'Recency (Months)'}, inplace=True)
+
         # remove PII for anonymized output
         anon_df = df.copy()
         PII_columns = ['AccountName','FirstName', 'LastName', 'Email', 'Address', 'City', 'State']
         anon_df.drop(PII_columns, axis=1, inplace=True)
         logger.debug(f'Anon Patron columns: {anon_df.columns}')
         logger.debug(f'Anon Patron shape: {anon_df.shape}')
-        anon_output_file = 'anon_' + patron_details_file
+        anon_output_file = 'anon_' + patrons_file
         anon_df.to_csv(anon_output_file, index=False)
         logger.info(f'Anon Patron results written to file: {anon_output_file}')
 
@@ -1507,7 +1519,7 @@ def get_patron_details(df,
 
             logger.debug('Add existing lat, long and ZIP+4 to the dataframe...')
             # first open the original file to see which lat/long details exist, so we don't re-generate them.
-            orig_df = pd.read_csv(patron_details_file,low_memory=False)
+            orig_df = pd.read_csv(patrons_file,low_memory=False)
 
             logger.debug(f'original: {orig_df.shape}')
             logger.debug(f'original: {orig_df.columns}')
@@ -1555,15 +1567,47 @@ def get_patron_details(df,
             logger.info(f'{count_missing_after} contacts are missing Lat/Long, likely to bad addresses')
             logger.info(f'{new_counts} new contacts had Lat/Long added.')
 
-            logger.debug(f'Full non-anon shape: {df.shape}')
-            logger.debug(f'Full non-anon columns: {df.columns}')
-            logger.debug(f'The full non-anonymized df: {df.head}')
+            # arranging columns
+            output_cols = ['AccountName','FirstName', 'LastName', 'ContactId','Email', 'Address', 'City', 'State', 'ZIP',
+                           'Segment', 'Lifespan',
+                           'PreferredGenre', 'PreferenceConfidence', 'PatronStatus','Omni','Subscriber', 'ChorusMember', 'DuesTxn',
+                           'FrequentBulkBuyer', 'Student','RegionAssignment',
+                           'Recency (Months)','Frequency','GrowthScore', 'AYM', 'Regularity','Monetary','RFMScore', 'CLV_Score',
+                           'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap','MonthsFromPenultimateEvent',
+                           'FirstEvent', 'FirstEventDate', 'SecondEvent',
+                           'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
+                           'LatestEvent', 'LatestEventDate', 'LatestSeason',
+                           'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
+                            'RecencyScore', 'FrequencyScore', 'MonetaryScore',
+                            'Latitude', 'Longitude', 'ZIP+4','AccountId']
+
+            full_output_df = df[output_cols]
+
+            logger.debug(f'Full non-anon shape: {full_output_df.shape}')
+            logger.debug(f'Full non-anon columns: {full_output_df.columns}')
+            logger.debug(f'The full non-anonymized df: {full_output_df.head}')
 
             # Save the full non-anonymized results
             logger.debug('Saving the full non-anon results...')
-            df.to_csv(patron_details_file, index=False)
+            full_output_df.to_csv(patrons_file, index=False)
 
-            logger.info(f'Full Patron results written to file: {patron_details_file}')
+            logger.info(f'Full Patron results written to file: {patrons_file}')
+
+            # arranging columns
+            summary_cols = ['AccountName','Segment', 'Lifespan','RegionAssignment',
+                           'PreferredGenre', 'PreferenceConfidence', 'PatronStatus','Omni','Subscriber', 'ChorusMember', 'DuesTxn',
+                           'FrequentBulkBuyer', 'Student',
+                           'Recency (Months)','Frequency','GrowthScore', 'AYM', 'Regularity','Monetary','RFMScore', 'CLV_Score',
+                           'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap','MonthsFromPenultimateEvent',
+                           'FirstEvent', 'FirstEventDate', 'SecondEvent',
+                           'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
+                           'LatestEvent', 'LatestEventDate', 'LatestSeason',
+                           'ContactId','FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP']
+
+            summary_df = df[summary_cols]
+            summary_output_file = 'summary_' + patrons_file
+            summary_df.to_csv(summary_output_file, index=False)
+
             return df
 
     except PermissionError:
@@ -1781,7 +1825,7 @@ def calculate_retention_and_churn(df, logger):
         # 3-Year Cumulative Retention Calculation
         three_years_patrons = set()  # Initialize the variable outside the if block
         if i >= 3:  # Ensure we have at least 3 years of data to calculate this
-            three_years_patrons = set(df[df['FiscalYear'].isin([current_fiscal_year, current_fiscal_year - 1, current_fiscal_year - 2])]['AccountId'])
+            three_years_patrons = set(df[df['FiscalYear'].isin([current_fiscal_year - 2, current_fiscal_year - 1, current_fiscal_year])]['AccountId'])
             retained_three_years_patrons = set(df[(df['AccountId'].isin(three_years_patrons)) & (df['FiscalYear'] == current_fiscal_year)]['AccountId'])
             cumulative_retention_rate = len(retained_three_years_patrons) / len(three_years_patrons) if len(three_years_patrons) > 0 else None
             retained_3Y_patrons_count = len(retained_three_years_patrons)  # 3-Year Retained patrons
@@ -1795,18 +1839,18 @@ def calculate_retention_and_churn(df, logger):
         # Store all metrics and calculated values in a dict for each fiscal year
         retention_data.append({
             'FiscalYear': current_fiscal_year,
-            'TotalPatronsPreviousYear': len(patrons_previous_year),
-            'NewPatronsPreviousYear': len(new_patrons_previous_year),
-            'RetainedNewPatrons': retained_new_patrons,
-            'RetainedAllPatrons': retained_all_patrons,
-            'ThreeYearPatrons': len(three_years_patrons),
-            'ThreeYearRetainedPatrons': retained_3Y_patrons_count,
-            'ChurnedExistingPatrons': churned_existing_patrons,
-            'NewPatronRetentionRate': new_patron_retention_rate if new_patron_retention_rate is not None else None,
-            'YoYRetentionRate': overall_retention_rate if overall_retention_rate is not None else None,
-            'ThreeYearCumulativeRetentionRate': cumulative_retention_rate,
-            'YoYChurnRate': churn_rate if churn_rate is not None else None,
-            'ThreeYearChurnRate': three_year_churn_rate
+            'Total Patrons Previous Year': len(patrons_previous_year),
+            'New Patrons Previous Year': len(new_patrons_previous_year),
+            'Retained New Patrons': retained_new_patrons,
+            'Retained All Patrons': retained_all_patrons,
+            'Three Year Patrons': len(three_years_patrons),
+            'Three YearRetained Patrons': retained_3Y_patrons_count,
+            'Churned Existing Patrons': churned_existing_patrons,
+            'New Patron Retention Rate': new_patron_retention_rate if new_patron_retention_rate is not None else None,
+            'YoY Retention Rate': overall_retention_rate if overall_retention_rate is not None else None,
+            'Three Year Cumulative Retention Rate': cumulative_retention_rate,
+            'YoY Churn Rate': churn_rate if churn_rate is not None else None,
+            'Three Year Churn Rate': three_year_churn_rate
         })
 
     # Convert to DataFrame for better display with fiscal year as index
