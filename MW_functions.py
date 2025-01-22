@@ -476,11 +476,10 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
 
     # Define a helper function to determine the subscription status for each AccountId
     sales_df['Subscriber'] = sales_df['EventName_sales'].apply(
-        lambda x: 2 if '2024-2025' in x.lower() or '24-25' in x.lower() else (
-            1 if 'subscri' in x.lower() else 0
+        lambda x: 'current' if '2024-2025' in x.lower() or '24-25' in x.lower() else (
+            'previous' if 'subscri' in x.lower() else 'never'
         )
     )
-
     logger.debug(f'Subscriber initial totals: {sales_df["Subscriber"].value_counts()}')
 
     logger.debug(f'Venue and Attribute columns: {sales_df.columns}')
@@ -1036,11 +1035,11 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # logger.debug(df[dm_df['EventName_sales'].isna()])
     logger.debug(df.shape)
 
+    # This deals with that Salesforce overcounts donations made as part of a subscription.
     # Create a boolean mask for 'Subscription' in the EventName
     #subscription_mask = df['EventName'].str.contains('Subscription')
     #subscription_mask = df['EventName_sales'].str.contains('subscription', case=False)
     subscription_mask = df['EventName_sales'].fillna('').str.contains('subscription', case=False)
-
 
     # Get the OrderNumbers with 'Subscription' in the EventName
     subscription_orders = df.loc[subscription_mask, 'OrderNumber'].unique()
@@ -1057,7 +1056,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     logger.debug(f'Donation handling complete.')
 
 
-# TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
+    # TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
 
     #df['NetTxn'] = df['TicketTotal'] + df['DonationAmount']
 
@@ -1565,25 +1564,28 @@ def get_patron_details(df,
             else:
                 logger.info('Bypassing Lat/Long and ZIP+4...')
 
-            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) & (df['RFMScore'] > RFMScoreThreshold)][['AccountName']]
+            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) &
+                         (df['RFMScore'] > RFMScoreThreshold)][['AccountName', 'Address', 'City', 'State', 'ZIP', 'RFMScore','Recency (Months)']]
             count_missing_after = list_df['AccountName'].nunique()
             new_counts = count_missing_before - count_missing_after
+            list_df.to_csv('bad_addresses.csv', index=False)
 
             logger.info(f'{count_missing_after} contacts are missing Lat/Long, likely to bad addresses')
             logger.info(f'{new_counts} new contacts had Lat/Long added.')
 
             # arranging columns
-            output_cols = ['AccountName','FirstName', 'LastName', 'ContactId','Email', 'Address', 'City', 'State', 'ZIP',
-                           'Segment', 'Lifespan',
-                           'PreferredGenre', 'PreferenceConfidence', 'PatronStatus','Omni','Subscriber', 'ChorusMember', 'DuesTxn',
-                           'FrequentBulkBuyer', 'Student','RegionAssignment',
-                           'Recency (Months)','Frequency','GrowthScore', 'AYM', 'Regularity','Monetary','RFMScore', 'CLV_Score',
-                           'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap','MonthsFromPenultimateEvent',
+            output_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'PreferredGenre',
+                           'PreferenceConfidence','Lifespan', 'LatestSeason', 'RegionAssignment',
+                           'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
+                           'RecencyScore', 'FrequencyScore', 'MonetaryScore','CLV_Score',
+                           'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
+                           'PatronStatus','Omni','Subscriber', 'ChorusMember', 'DuesTxn',
+                           'FrequentBulkBuyer', 'Student',
+                           'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap',
                            'FirstEvent', 'FirstEventDate', 'SecondEvent',
                            'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
-                           'LatestEvent', 'LatestEventDate', 'LatestSeason',
-                           'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
-                            'RecencyScore', 'FrequencyScore', 'MonetaryScore',
+                           'LatestEvent', 'LatestEventDate',
+                           'FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
                             'Latitude', 'Longitude', 'ZIP+4','AccountId']
 
             full_output_df = df[output_cols]
@@ -1599,15 +1601,19 @@ def get_patron_details(df,
             logger.info(f'Full Patron results written to file: {patrons_file}')
 
             # arranging columns
-            summary_cols = ['AccountName','Segment', 'Lifespan','RegionAssignment',
-                           'PreferredGenre', 'PreferenceConfidence', 'PatronStatus','Omni','Subscriber', 'ChorusMember', 'DuesTxn',
-                           'FrequentBulkBuyer', 'Student',
-                           'Recency (Months)','Frequency','GrowthScore', 'AYM', 'Regularity','Monetary','RFMScore', 'CLV_Score',
-                           'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap','MonthsFromPenultimateEvent',
-                           'FirstEvent', 'FirstEventDate', 'SecondEvent',
-                           'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
-                           'LatestEvent', 'LatestEventDate', 'LatestSeason',
-                           'ContactId','FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP']
+            summary_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason',
+                            'PreferredGenre', 'PreferenceConfidence','RegionAssignment',
+                            'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
+                            'RecencyScore', 'FrequencyScore', 'MonetaryScore','CLV_Score',
+                            #'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
+                            'PatronStatus','Omni','Subscriber', 'ChorusMember', 'DuesTxn',
+                            'FrequentBulkBuyer', 'Student',
+                            'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap',
+                            'FirstEvent', 'FirstEventDate', 'SecondEvent',
+                            'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
+                            'LatestEvent', 'LatestEventDate',
+                            'FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
+                            'Latitude', 'Longitude', 'ZIP+4','AccountId']
 
             summary_df = df[summary_cols]
             summary_output_file = 'summary_' + patrons_file
