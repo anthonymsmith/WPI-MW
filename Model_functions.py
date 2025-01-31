@@ -14,29 +14,22 @@ Author: Anthony Smith
 Date: September, 2024
 """
 
-import pandas as pd
-import numpy as np
-from sklearn.linear_model import LinearRegression
-from scipy.stats import entropy, stats
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
+from datetime import timedelta
+from time import perf_counter
 
-from datetime import datetime, timedelta
-from timeit import default_timer as timer
-import hashlib
-import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
-import requests
-from requests.exceptions import RequestException
+import numpy as np
+import pandas as pd
+from scipy.stats import entropy
+from sklearn.linear_model import LinearRegression
 
 def load_anonymized_dataset(anon_data_file, logger):
-    start = timer()
+    start = perf_counter()
 
     # Load event manifest file and fix column names
     event_df = pd.read_csv(anon_data_file)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Anon Dataset loaded. Execution Time: {formatted_timing}')
@@ -89,23 +82,25 @@ Returns:
 """
 
 def calculate_genre_scores(df, logger):
-    start = timer()
+    start = perf_counter()
 
-
-    # Replace missing genres with a placeholder
+    # Replace missing genres with 'None' and delete them from this calculation.
     df['EventGenre'] = df['EventGenre'].fillna('None')
+    df = df[df['EventGenre'] != "None"]
 
     # Drop duplicates to get unique events per AccountId, Event Date, and genre
     unique_events_df = df.drop_duplicates(subset=['AccountId', 'EventDate', 'EventGenre'])
 
     # Calculate the global frequency for each genre
-    global_genre_freq = unique_events_df['EventGenre'].value_counts() / len(unique_events_df)
+    #global_genre_freq = unique_events_df['EventGenre'].value_counts() / len(unique_events_df)
+    global_genre_freq = unique_events_df['EventGenre'].value_counts(normalize=True)
 
     # Calculate the by-genre counts for each account
     genre_counts = unique_events_df.groupby(['AccountId', 'EventGenre']).size().reset_index(name='Count')
 
     # Adjusted normalization: Normalize counts based on global genre frequency
-    genre_counts['NormalizedCount'] = genre_counts.apply(lambda row: row['Count'] / (1 + global_genre_freq[row['EventGenre']]), axis=1)
+    #genre_counts['NormalizedCount'] = genre_counts.apply(lambda row: row['Count'] / (1 + global_genre_freq[row['EventGenre']]), axis=1)
+    genre_counts['NormalizedCount'] = genre_counts['Count'] / (1 + genre_counts['EventGenre'].map(global_genre_freq))
 
     # Calculate the total normalized count for each account
     total_counts = genre_counts.groupby('AccountId')['NormalizedCount'].sum().reset_index(name='TotalNormalized')
@@ -125,23 +120,20 @@ def calculate_genre_scores(df, logger):
     def calculate_entropy(row):
         proportions = row[row > 0]  # Only consider non-zero proportions
         return entropy(proportions)
-
     # Calculate entropy for each patron (indicating how spread their attendance is across genres)
     genre_df['Entropy'] = genre_df.drop(columns=['AccountId', 'Frequency']).apply(calculate_entropy, axis=1)
 
     # Invert entropy to quantify the strength of preference (higher entropy means weaker preference)
-    genre_df['RawPreferenceStrength'] = 1 / (.6 + genre_df['Entropy']) # peaks below 2
+    genre_df['RawPreferenceStrength'] = 1 / (.6 + genre_df['Entropy']).clip(upper=2) # peaks below 2
 
     # Determine the preferred genre (the one with the highest normalized percentage)
-    def get_preferred_genre(row):
-        return row.idxmax()
-
-    genre_df['PreferredGenre'] = genre_df.drop(columns=['AccountId', 'Entropy', 'RawPreferenceStrength', 'Frequency']).apply(get_preferred_genre, axis=1)
+    genre_df['PreferredGenre'] = genre_df.drop(columns=['AccountId', 'Entropy', 'RawPreferenceStrength', 'Frequency']).idxmax(axis=1)
 
     # Add a suffix of 'Score' to EventGenre columns
     genre_df.columns = [col + 'Score' if col not in ['AccountId', 'PreferredGenre', 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col for col in genre_df.columns]
+    logger.debug(f'Genre columns: {genre_df.columns}')
 
-    # Set 'Omni' flag based on entropy threshold
+# Set 'Omni' flag based on entropy threshold
     entropy_threshold = 1.5  # Define your entropy threshold for omnivores
     genre_df['Omni'] = genre_df['Entropy'] > entropy_threshold
 
@@ -151,6 +143,7 @@ def calculate_genre_scores(df, logger):
     # Log scaling of preference strength with an exponential boost for frequent attenders
     max_events = genre_df['Frequency'].max()
 
+    """
     def calculate_event_weighting(frequency, max_frequency, threshold):
         if frequency > threshold:
             # Apply a slight exponential boost for counts above the threshold
@@ -163,6 +156,13 @@ def calculate_genre_scores(df, logger):
     genre_df['EventCountWeighting'] = genre_df['Frequency'].apply(
         lambda x: calculate_event_weighting(x, max_events, confidence_threshold)
     )
+    """
+    above_threshold = genre_df['Frequency'] > confidence_threshold
+    genre_df['EventCountWeighting'] = np.where(
+        above_threshold,
+        (np.log1p(1 + genre_df['Frequency']) + (genre_df['Frequency'] - confidence_threshold) ** 0.5) / np.log1p(1 + max_events),
+        np.log1p(1 + genre_df['Frequency']) / np.log1p(1 + max_events)
+    )
 
     # Adjust PreferenceConfidence with dynamic weighting
     genre_df['PreferenceConfidence'] = np.clip(
@@ -170,7 +170,7 @@ def calculate_genre_scores(df, logger):
         a_min=0,  # Minimum allowed value
         a_max=100  # Maximum allowed value
     )
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Genre Scores complete. Execution Time: {formatted_timing}')
@@ -207,6 +207,55 @@ Returns:
 """
 
 def calculate_growth_score(df, current_year):
+    """
+    Estimate monetary growth over time using weighted linear regression.
+    More recent years are weighted higher to emphasize recent growth.
+
+    Args:
+        df (pd.DataFrame): Dataframe with 'FiscalYear' and 'Monetary' columns.
+        current_year (int): The current fiscal year.
+
+    Returns:
+        float: Growth score (slope of weighted regression line), or None if insufficient data.
+    """
+    # Define weights for the most recent 5 years
+    weight_map = {
+        0: 0.4,  # Current year
+        -1: 0.3,  # Last year
+        -2: 0.2,
+        -3: 0.1,
+        -4: 0.05
+    }
+
+    # Apply weights using a mapping
+    df['Weight'] = df['FiscalYear'].apply(lambda y: weight_map.get(y - current_year, 0))
+
+    # Remove years that received zero weight (older than 5 years)
+    df = df[df['Weight'] > 0]
+
+    # Ensure we have at least 2 different fiscal years
+    if df['FiscalYear'].nunique() < 2:
+        return None  # Not enough data for meaningful regression
+
+    # Prepare regression variables
+    fiscal_years = df['FiscalYear'].values.reshape(-1, 1)
+    monetary_values = df['Monetary'].values
+
+    # Apply weight scaling
+    weighted_monetary = monetary_values * df['Weight'].values
+
+    # Log transform monetary values to reduce impact of large values (optional)
+    log_monetary = np.log1p(weighted_monetary)  # log(1 + x) prevents log(0) errors
+
+    # Fit weighted linear regression
+    reg = LinearRegression().fit(fiscal_years, log_monetary)
+
+    # Extract slope as growth score (adjusted for log scale)
+    growth_score = reg.coef_[0]
+
+    return growth_score
+
+def old_calculate_growth_score(df, current_year,logger):
     """
     Calculate growth score using weighted linear regression on FiscalYear and Monetary values.
     Recent years are weighted higher to emphasize recent growth.
@@ -348,9 +397,8 @@ def calculate_patron_metrics(df, logger):
     from datetime import datetime, timedelta
     import numpy as np
     import pandas as pd
-    from timeit import default_timer as timer
 
-    start = timer()
+    start = perf_counter()
     today = datetime.today()
 
     logger.debug(f'Subscriber read into Calc: {df["Subscriber"].value_counts()}')
@@ -465,11 +513,6 @@ def calculate_patron_metrics(df, logger):
     logger.info("Calculating Regularity...")
     df = calculate_regularity(df, logger)
 
-    logger.debug(f'Subscriber before aggregation: {df["Subscriber"].value_counts()}')
-
-    #bool_columns = ['ChorusMember', 'DuesTxn', 'FrequentBulkBuyer', 'Student']
-    #df[bool_columns] = df[bool_columns].fillna(False).astype(bool)
-
     # Merge back into metrics
     metrics_df = df.groupby('AccountId').agg({
         'Recency': 'min',
@@ -488,11 +531,6 @@ def calculate_patron_metrics(df, logger):
         'Student': 'max'
     }).reset_index()
 
-    #metrics_df = metrics_df.merge(subscription_status, on='AccountId', how='left')
-    #logger.debug(f'Subscriber after aggregation: {metrics_df["Subscriber"].value_counts()}')
-    #metrics_df['Subscriber'] = metrics_df['Subscriber'].astype(int).replace({0: 'never', 1: 'previous', 2: 'current'})
-    #logger.debug(f'Subscriber after conversion: {metrics_df["Subscriber"].value_counts()}')
-
     metrics_df = metrics_df.merge(growth_scores, on='AccountId', how='left')
     metrics_df = metrics_df.merge(aym_df[['AccountId', 'AYM']], on='AccountId', how='left')
 
@@ -504,6 +542,7 @@ def calculate_patron_metrics(df, logger):
     metrics_df['AYM'] = metrics_df['AYM'].fillna(0)
     metrics_df['Regularity'] = metrics_df['Regularity'].fillna(0)
     metrics_df['DaysFromFirstEvent'] = metrics_df['DaysFromFirstEvent'].fillna(3600)
+
     # Calculate additional metrics
     metrics_df['RecentEventYearsGap'] = (metrics_df['DaysFromPenultimateEvent'] - metrics_df['Recency'])/365
     metrics_df['Engagement'] = safe_divide(metrics_df['Frequency'], metrics_df['DaysFromFirstEvent'])
@@ -530,13 +569,11 @@ def calculate_patron_metrics(df, logger):
 
     metrics_df['RFMScore'] = metrics_df['RecencyScore'] + metrics_df['FrequencyScore'] + metrics_df['MonetaryScore']
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     logger.info(f'Patron metrics complete. Execution Time: {timing}')
 
     return metrics_df
-
-
 
 """
 Function: assign_segment

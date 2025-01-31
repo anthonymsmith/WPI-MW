@@ -19,7 +19,7 @@ import numpy as np
 import re
 import Model_functions as mod
 from datetime import datetime, timedelta
-from timeit import default_timer as timer
+from time import perf_counter
 import hashlib
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
@@ -52,7 +52,7 @@ Returns:
     pd.DataFrame: The cleaned and processed DataFrame containing event data.
 """
 def load_event_manifest(manifest_file, logger):
-    start = timer()
+    start = perf_counter()
 
     # Load event manifest file and fix column names
     event_df = pd.read_excel(manifest_file)
@@ -72,7 +72,7 @@ def load_event_manifest(manifest_file, logger):
     # Sort dataframe
     event_df = event_df.sort_values(by=['EventDate', 'EventName', 'EventInstance'], ascending=False)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Events loaded. Execution Time: {formatted_timing}')
@@ -110,7 +110,7 @@ Returns:
     pd.DataFrame: The original event DataFrame (unmodified), though the processed PnL data is saved to the specified CSV file.
 """
 def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
-    start = timer()
+    start = perf_counter()
 
     PnL_df = pd.read_excel(Pnl_file,sheet_name='PnLSourceData')
     logger.debug(f'raw PnL {PnL_df.columns}')
@@ -170,7 +170,7 @@ def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
     # Save the processed data
     res_df.to_csv(PnLProcessed_file, index=False)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'PnL data written to {PnLProcessed_file}. Execution Time: {formatted_timing}')
@@ -198,7 +198,7 @@ Returns:
     pd.DataFrame: The processed DataFrame containing the sales data with renamed columns and only recent records.
 """
 def load_sales_file(sales_file, yearsOfData, logger):
-    start = timer()
+    start = perf_counter()
 
     # load sales file and fix column names
     sales_df = pd.read_csv(sales_file, encoding= 'latin1', low_memory=False)
@@ -264,7 +264,7 @@ def load_sales_file(sales_file, yearsOfData, logger):
     beginning_date = datetime.now() - timedelta(days=365*yearsOfData)
     sales_df = sales_df[sales_df['CreatedDate'] > beginning_date]
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Sales loaded. Execution Time: {formatted_timing}')
@@ -301,7 +301,7 @@ Returns:
     pd.DataFrame: The cleaned and preprocessed sales DataFrame, ready for further analysis.
 """
 def sales_initial_prep(df, Account_file, logger):
-    start = timer()
+    start = perf_counter()
     logger.debug(df.shape)
     logger.debug(f'Sales pre-prep columns: {df.columns}')
 
@@ -373,7 +373,7 @@ def sales_initial_prep(df, Account_file, logger):
     logger.debug(df.head)
     logger.debug(df.shape)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Initial sales prep complete. Execution Time: {formatted_timing}')
@@ -418,7 +418,7 @@ Returns:
     pd.DataFrame: The processed DataFrame with updated venue names and additional columns for customer attributes ('ChorusMember', 'DuesTxn', 'Student', 'Subscriber').
 """
 def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logger):
-    start = timer()
+    start = perf_counter()
     logger.debug(f'Sales columns: {sales_df.columns}')
 
     # Clean up venue names
@@ -484,7 +484,7 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
 
     logger.debug(f'Venue and Attribute columns: {sales_df.columns}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Venue and attribute processing complete. Execution Time: {formatted_timing}')
@@ -521,7 +521,7 @@ Returns:
     pd.DataFrame: The processed DataFrame with additional columns for each genre, representing the count of events attended by each account.
 """
 def genre_counts(df, logger):
-    start = timer()
+    start = perf_counter()
 
     # Fill NaN values in 'EventGenre' with a placeholder
     df['EventGenre'] = df['EventGenre'].fillna('None')
@@ -555,7 +555,7 @@ def genre_counts(df, logger):
     logger.debug(f'Sales with genre columns: {merged_df.columns}')
     logger.debug(df.head)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'genre counts complete. Execution Time: {formatted_timing}')
@@ -598,7 +598,7 @@ Returns:
     pd.DataFrame: The processed DataFrame with cleaned and standardized 'State' and 'City' fields.
 """
 def state_and_city_processing(sales_df, logger):
-    start = timer()
+    start = perf_counter()
 
     logger.debug(f'State & City input columns: {sales_df.shape}')
     logger.debug(f'State & City input shape: {sales_df.shape}')
@@ -779,7 +779,7 @@ def state_and_city_processing(sales_df, logger):
     logger.debug('MA cities with null state')
     logger.debug(sales_df.shape)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'State and city processing complete. Execution Time: {formatted_timing}')
@@ -816,7 +816,7 @@ Returns:
     pd.DataFrame: The processed DataFrame with cleaned and standardized 'Address' and 'ZIP' fields.
 """
 def address_and_ZIP_processing(sales_df, logger):
-    start = timer()
+    start = perf_counter()
     logger.debug(sales_df.shape)
 
     # Clean up addresses
@@ -865,7 +865,7 @@ def address_and_ZIP_processing(sales_df, logger):
     # Apply the clean_zip_codes function to the sales_df DataFrame
     sales_df = clean_zip_codes(sales_df, 'ZIP')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'address & ZIP processing complete. Execution Time: {formatted_timing}')
@@ -899,7 +899,7 @@ Returns:
     pd.DataFrame: The merged DataFrame containing combined sales and event data, sorted by 'EventDate_sales'.
 """
 def combine_sales_and_events(sales_df, event_df, logger):
-    start = timer()
+    start = perf_counter()
 
     logger.debug('Sales + Events:')
 
@@ -933,7 +933,7 @@ def combine_sales_and_events(sales_df, event_df, logger):
 
     logger.debug(f'Subscriber totals after event merge: {se_df["Subscriber"].value_counts()}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Sales and events merging. Execution Time: {formatted_timing}')
@@ -972,7 +972,7 @@ Exceptions:
     - Handles any errors by logging debug information during processing.
 """
 def final_processing_and_output(df, output_file, logger, processDonations):
-    start = timer()
+    start = perf_counter()
 
     # Clean up Event Types:
     df['EventType'] = df['EventType'].str.title()
@@ -1054,13 +1054,12 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # Set DonationAmount to 0 for those records
     df.loc[indices_to_zero, 'DonationAmount'] = 0
     logger.debug(f'Donation handling complete.')
-
+    logger.info(f'raw columns: {df.columns}')
 
     # TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
-
     #df['NetTxn'] = df['TicketTotal'] + df['DonationAmount']
 
-    #Strip to final set up columns for transaction file output.
+    # Strip to final set up columns for transaction file output.
     # We're dropping patron attribute information from the transaction file, but keeping them for patron details.
     output_cols = [
                    'AccountName','AccountId','ContactId',
@@ -1072,8 +1071,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
                    'Quantity', 'ItemPrice', 'TicketTotal', 'PriceLevel', 'AmountPaid', 'DonationName', 'DonationAmount',#'Total',
                    'DiscountCode', 'DiscountTotal', 'PreDiscountTotal', 'UnitDiscount', 'UnitDiscountType',
                    'ChorusMember','DuesTxn','Student','Subscriber','PatronStatus',
-                   'Choral','Brass','Classical', 'Contemporary', 'Dance'
-                   ]
+                   'Choral','Brass','Classical', 'Contemporary', 'Dance']
 
     # write results to output file for only output columns.
     output_df = df[output_cols]
@@ -1089,7 +1087,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     anon_df.to_csv('anon_' + output_file, index=False)
     logger.debug(f'PII safe Output written. {anon_df.columns}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Final sales results written to file: {output_file}. Execution Time: {formatted_timing}')
@@ -1099,7 +1097,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     return df # the full data frame is needed for Patron details
 """
 def region_processing(df, filename, logger):
-    start = timer()
+    start = perf_counter()
 
     # add in ZIP-Region Assignments
     raw_regions_df = pd.read_csv(filename, dtype={'PHYSICAL ZIP': str,'ZIP': str})
@@ -1125,7 +1123,7 @@ def region_processing(df, filename, logger):
     logger.debug(f'regions post merge: {dm_df.shape}')
     logger.debug(f'Results With regions {dm_df.columns}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
 
@@ -1133,7 +1131,7 @@ def region_processing(df, filename, logger):
 """
 
 def add_regions(df, regions_file, logger):
-    start = timer()
+    start = perf_counter()
 
     # Load the regions file with appropriate data types
     raw_regions_df = pd.read_csv(regions_file, dtype={'PHYSICAL ZIP': str, 'ZIP': str})
@@ -1163,7 +1161,7 @@ def add_regions(df, regions_file, logger):
     logger.debug(f'Regions post merge: {dr_df.shape}')
     logger.debug(f'Results with regions {dr_df.columns}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Region Processing complete. Execution Time: {formatted_timing}')
@@ -1172,12 +1170,12 @@ def add_regions(df, regions_file, logger):
 
 
 def load_anonymized_dataset(anon_data_file, logger):
-    start = timer()
+    start = perf_counter()
 
     # Load event manifest file and fix column names
     event_df = pd.read_csv(anon_data_file, low_memory=False)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Anon Dataset loaded. Execution Time: {formatted_timing}')
@@ -1190,7 +1188,7 @@ def add_key_events(df, logger):
     import numpy as np
     import pandas as pd
 
-    start = timer()
+    start = perf_counter()
 
     # Log the initial state of the EventDate column
 
@@ -1242,7 +1240,7 @@ def add_key_events(df, logger):
     # Log final dataframe sample
 
     # Log execution time
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Key events added: Execution Time: {formatted_timing}')
@@ -1279,7 +1277,7 @@ Returns:
         - 'FrequentBulkBuyer': A boolean flag indicating if the account made bulk purchases in more than the specified number of events.
 """
 def add_bulk_buyers(df, logger):
-    start = timer()
+    start = perf_counter()
 
     bulk_threshold = 12
     event_count_threshold = 4
@@ -1304,7 +1302,7 @@ def add_bulk_buyers(df, logger):
 
     logger.debug(f'Frequent Bulk buyers list: {frequent_bulk_buyers}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Bulk Buyers added: Execution Time: {formatted_timing}')
@@ -1549,7 +1547,7 @@ def get_patron_details(df,
 
             if GetLatLong:
                 logger.info('Getting any new Lat/Long data...')
-                start = timer()
+                start = perf_counter()
                 # this will only update AccountId's if lat and long are missing.
                 df = df.apply(update_geocode_info, args=(RFMScoreThreshold,logger), axis=1)
 
@@ -1557,7 +1555,7 @@ def get_patron_details(df,
                 #logger.info('Get ZIP+4...')
                 #df = df.apply(update_zip_plus4_info, args=(RFMScoreThreshold,), axis=1)
 
-                end = timer()
+                end = perf_counter()
                 timing = timedelta(seconds=(end - start))
                 formatted_timing = "{:.2f}".format(timing.total_seconds())
 
@@ -1758,7 +1756,7 @@ def update_geocode_info(df, RFMScoreThreshold, logger):
             # Call get_geocode_info() and update latitude and longitude
             geocode_info = get_geocode_info(f"{df['Address']}, {df['City']}, {df['State']}, {df['ZIP']}")
             if geocode_info is not None:
-                #start = timer()
+                #start = perf_counter()
                 df['Latitude'] = geocode_info['lat']
                 df['Longitude'] = geocode_info['lng']
 
