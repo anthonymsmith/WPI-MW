@@ -36,50 +36,114 @@ def load_anonymized_dataset(anon_data_file, logger):
 
     return event_df
 
-"""
-Function: calculate_genre_scores
+def calculate_event_scores(df, logger, event_column, venue_threshold=6):
+    """
+    Generalized function to calculate scores for EventGenre, EventClass, or EventVenue.
 
-Description:
-    This function calculates normalized genre preference scores for each account based on event attendance data. 
-    It adjusts the counts of events attended per genre by accounting for the global frequency of each genre, 
-    giving higher weight to less frequent genres. Additionally, it computes a variety of related metrics, such 
-    as entropy to measure the diversity of genre preferences, preference strength, and confidence scores.
+    Parameters:
+        df (DataFrame): The input DataFrame containing event data.
+        logger (Logger): Logger instance for logging messages.
+        event_column (str): The column to calculate scores for (e.g., 'EventGenre', 'EventClass', 'EventVenue').
+        venue_threshold (int): Minimum occurrences required for an EventVenue to be considered (to remove one-offs).
 
-Parameters:
-    df (pd.DataFrame): A DataFrame containing event data with columns:
-        - 'AccountId': Unique identifier for each customer.
-        - 'EventDate': The date of each event attended by the customer.
-        - 'EventGenre': The genre of the event attended.
-        - 'EventName': The name of the event, used for calculating total event attendance frequency.
-    logger (logging.Logger): A logger object for logging execution details, debugging information, and execution time.
+    Returns:
+        DataFrame: A DataFrame with scores, entropy, confidence, and preference calculations.
+    """
+    start = perf_counter()
 
-Process:
-    1. **Unique Events**: Drop duplicates to obtain unique events per account, event date, and genre.
-    2. **Global Genre Frequency**: Calculate the overall frequency of each genre across all events.
-    3. **Genre Counts Per Account**: Compute the count of events attended per genre for each account.
-    4. **Normalization**: Adjust the genre counts by normalizing with respect to the global genre frequency, giving less frequent genres a higher weight.
-    5. **Total Normalized Count**: Calculate the total normalized event count for each account.
-    6. **Normalized Genre Percentage**: For each account, calculate the percentage of events attended for each genre relative to the total normalized count.
-    7. **Pivot Table**: Reshape the data into a pivot table where each row represents an account and each column represents a genre's normalized percentage score.
-    8. **Frequency**: Recalculate the total number of distinct events attended by each account.
-    9. **Entropy Calculation**: Calculate the entropy for each account to measure the spread of event attendance across different genres.
-    10. **Preference Strength**: Invert the entropy to quantify the strength of genre preference (lower entropy indicates a stronger preference).
-    11. **Preferred Genre**: Identify the genre with the highest normalized percentage for each account.
-    12. **Omni Flag**: Set an 'Omni' flag based on an entropy threshold to identify accounts with broad genre preferences.
-    13. **Confidence**: Apply a confidence metric based on the total number of events attended, using a logarithmic scaling.
-    14. **Preference Confidence**: Adjust the preference strength using the confidence metric for a more reliable measure of preference.
+    # Ensure we are not modifying the original DataFrame
+    df = df.copy()
 
-Returns:
-    pd.DataFrame: A DataFrame where each row represents an account and contains the following columns:
-        - Normalized genre percentage scores for each genre (column names suffixed with 'Score').
-        - 'Frequency': The total number of distinct events attended by the account.
-        - 'Entropy': A measure of how spread the account's event attendance is across genres.
-        - 'RawPreferenceStrength': A measure of how strongly an account prefers a specific genre (based on entropy).
-        - 'PreferredGenre': The genre with the highest normalized percentage score for the account.
-        - 'Omni': A flag indicating if the account has broad genre preferences (high entropy).
-        - 'Confidence': A confidence score based on the total number of events attended.
-        - 'PreferenceConfidence': The adjusted preference strength, factoring in both confidence and raw preference strength.
-"""
+    # Replace missing values with 'None' and remove them from the calculation
+    df[event_column] = df[event_column].fillna('None')
+    df = df[df[event_column] != "None"]
+
+    # Handle venue outliers: Remove venues with less than `venue_threshold` occurrences
+    if event_column == 'EventVenue':
+        venue_counts = df[event_column].value_counts()
+        valid_venues = venue_counts[venue_counts >= venue_threshold].index
+        df = df[df[event_column].isin(valid_venues)]
+        logger.debug(f"Filtered out low-attendance venues. Kept {len(valid_venues)} venues.")
+
+    # Drop duplicates to count unique events per AccountId, EventDate, and event_column
+    unique_events_df = df.drop_duplicates(subset=['AccountId', 'EventDate', event_column])
+
+    # Calculate the global frequency for each category
+    global_event_freq = unique_events_df[event_column].value_counts(normalize=True)
+
+    # Calculate event counts per account
+    event_counts = unique_events_df.groupby(['AccountId', event_column]).size().reset_index(name='Count')
+
+    # Normalize counts by global frequency
+    event_counts['NormalizedCount'] = event_counts['Count'] / (1 + event_counts[event_column].map(global_event_freq))
+
+    # Compute total normalized count per AccountId
+    total_counts = event_counts.groupby('AccountId')['NormalizedCount'].sum().reset_index(name='TotalNormalized')
+
+    # Calculate normalized percentage for each event type per AccountId
+    event_counts = event_counts.merge(total_counts, on='AccountId')
+    event_counts['NormalizedPercentage'] = event_counts['NormalizedCount'] / event_counts['TotalNormalized']
+
+    # Reshape and finalize DataFrame
+    event_df = event_counts.pivot(index='AccountId', columns=event_column, values='NormalizedPercentage').fillna(0).reset_index()
+
+    # Compute frequency (distinct events attended by each AccountId)
+    event_df['Frequency'] = df.groupby('AccountId')['EventName'].nunique().reset_index(drop=True)
+
+    # Compute entropy (how evenly distributed attendance is across categories)
+    def calculate_entropy(row):
+        proportions = row[row > 0]  # Consider only non-zero proportions
+        return entropy(proportions)
+
+    event_df['Entropy'] = event_df.drop(columns=['AccountId', 'Frequency']).apply(calculate_entropy, axis=1)
+
+    # Invert entropy to quantify strength of preference (higher entropy = weaker preference)
+    event_df['RawPreferenceStrength'] = 1 / (0.6 + event_df['Entropy']).clip(upper=2)
+
+    # Determine the preferred category for each AccountId
+    event_df[f'Preferred{event_column}'] = event_df.drop(columns=['AccountId', 'Entropy', 'RawPreferenceStrength', 'Frequency']).idxmax(axis=1)
+
+    # Add 'Score' suffix to relevant columns
+    event_df.columns = [col + 'Score' if col not in ['AccountId', f'Preferred{event_column}', 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col for col in event_df.columns]
+
+    # Set 'Omni' flag based on entropy threshold
+    entropy_threshold = 1.5
+    event_df['Omni'] = event_df['Entropy'] > entropy_threshold
+
+    # Adjust confidence calculation based on attendance frequency
+    confidence_threshold = 10
+    max_events = event_df['Frequency'].max()
+
+    event_df['EventCountWeighting'] = np.where(
+        event_df['Frequency'] > confidence_threshold,
+        (np.log1p(1 + event_df['Frequency']) + (event_df['Frequency'] - confidence_threshold) ** 0.5) / np.log1p(1 + max_events),
+        np.log1p(1 + event_df['Frequency']) / np.log1p(1 + max_events)
+    )
+
+    # Adjust PreferenceConfidence with dynamic weighting
+    event_df['PreferenceConfidence'] = np.clip(
+        event_df['RawPreferenceStrength'] * event_df['EventCountWeighting'] * 100,
+        a_min=0,  # Minimum allowed value
+        a_max=100  # Maximum allowed value
+    )
+
+    # Rename key columns to avoid conflicts when merging multiple event scores
+    event_df = event_df.rename(columns={
+        'Entropy': f'{event_column}Entropy',
+        'Omni': f'{event_column}Omni',
+        'RawPreferenceStrength': f'{event_column}RawPreferenceStrength',
+        'Frequency': f'{event_column}Frequency',
+        'EventCountWeighting': f'{event_column}EventCountWeighting',
+        'PreferenceConfidence': f'{event_column}PreferenceConfidence'
+})
+
+
+    # Execution time logging
+    end = perf_counter()
+    timing = timedelta(seconds=(end - start))
+    logger.info(f'{event_column} Scores complete. Execution Time: {timing.total_seconds():.2f} seconds')
+
+    return event_df
 
 def calculate_genre_scores(df, logger):
     start = perf_counter()
@@ -134,29 +198,36 @@ def calculate_genre_scores(df, logger):
     logger.debug(f'Genre columns: {genre_df.columns}')
 
 # Set 'Omni' flag based on entropy threshold
-    entropy_threshold = 1.5  # Define your entropy threshold for omnivores
+    entropy_threshold = 1.2  # Define your entropy threshold for omnivores
     genre_df['Omni'] = genre_df['Entropy'] > entropy_threshold
 
+    # Define a more gradual threshold for confidence boost
+    confidence_threshold = 15  # Increased from 10 to slow confidence growth
+
+    # Log scaling of preference strength with a controlled exponential boost
+    max_events = genre_df['Frequency'].max()
+
+    # Apply a smoother weighting function
+    above_threshold = genre_df['Frequency'] > confidence_threshold
+    genre_df['EventCountWeighting'] = np.where(
+        above_threshold,
+        (np.log1p(1 + genre_df['Frequency']) + 0.3 * (genre_df['Frequency'] - confidence_threshold) ** 0.4) / np.log1p(1 + max_events),
+        np.log1p(1 + genre_df['Frequency']) / np.log1p(1 + max_events)
+    )
+
+    # Adjust PreferenceConfidence with dynamic weighting
+    genre_df['PreferenceConfidence'] = np.clip(
+        genre_df['RawPreferenceStrength'] * genre_df['EventCountWeighting'] * 100,
+        a_min=0,  # Minimum allowed value
+        a_max=100  # Maximum allowed value
+    )
+    """
     # Define a threshold for when attendance should increase confidence more quickly
     confidence_threshold = 10
 
     # Log scaling of preference strength with an exponential boost for frequent attenders
     max_events = genre_df['Frequency'].max()
 
-    """
-    def calculate_event_weighting(frequency, max_frequency, threshold):
-        if frequency > threshold:
-            # Apply a slight exponential boost for counts above the threshold
-            return (np.log1p(1 + frequency) + (frequency - threshold) ** 0.5) / np.log1p(1 + max_frequency)
-        else:
-            # Standard log scaling for lower counts
-            return np.log1p(1 + frequency) / np.log1p(1 + max_frequency)
-
-    # Apply the dynamic event weighting function
-    genre_df['EventCountWeighting'] = genre_df['Frequency'].apply(
-        lambda x: calculate_event_weighting(x, max_events, confidence_threshold)
-    )
-    """
     above_threshold = genre_df['Frequency'] > confidence_threshold
     genre_df['EventCountWeighting'] = np.where(
         above_threshold,
@@ -170,6 +241,7 @@ def calculate_genre_scores(df, logger):
         a_min=0,  # Minimum allowed value
         a_max=100  # Maximum allowed value
     )
+    """
     end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
@@ -544,7 +616,7 @@ def calculate_patron_metrics(df, logger):
     metrics_df['DaysFromFirstEvent'] = metrics_df['DaysFromFirstEvent'].fillna(3600)
 
     # Calculate additional metrics
-    metrics_df['RecentEventYearsGap'] = (metrics_df['DaysFromPenultimateEvent'] - metrics_df['Recency'])/365
+    metrics_df['RecentEventYearsGap'] = metrics_df['DaysFromPenultimateEvent'] /365
     metrics_df['Engagement'] = safe_divide(metrics_df['Frequency'], metrics_df['DaysFromFirstEvent'])
 
     # Apply binning for RFM scores

@@ -520,7 +520,96 @@ Process:
 Returns:
     pd.DataFrame: The processed DataFrame with additional columns for each genre, representing the count of events attended by each account.
 """
+def event_counts(df, logger, event_column):
+    """
+    Generalized function to count occurrences of a specified event attribute (e.g., EventGenre, EventClass, EventVenue)
+    for each AccountId.
+
+    Parameters:
+        df (DataFrame): The input DataFrame containing event data.
+        logger (Logger): Logger instance for logging messages.
+        event_column (str): The column name to count occurrences of (e.g., 'EventGenre', 'EventClass', 'EventVenue').
+
+    Returns:
+        DataFrame: Original DataFrame merged with event counts for the specified column.
+    """
+    start = perf_counter()
+
+    # Ensure we are not modifying the original DataFrame
+    df = df.copy()
+
+    # Fill NaN values in the specified event column
+    df[event_column] = df[event_column].fillna('None')
+
+    # Filter relevant event types
+    df_filtered = df[df['EventType'].isin(['Live', 'Virtual', 'Subscriptions'])]
+
+    logger.debug(f'Subscriber totals before {event_column} merge: {df["Subscriber"].value_counts()}')
+
+    # Log all unique values of the event column
+    unique_values = df_filtered[event_column].unique()
+    logger.debug(f'Unique values in {event_column}: {list(unique_values)}')
+
+    # Drop duplicates to count only unique events per AccountId for the given event column
+    unique_events_df = df_filtered.drop_duplicates(subset=['AccountId', event_column, 'EventId'])
+
+    # Pivot table to count the number of events per category for each AccountId
+    event_counts_df = unique_events_df.pivot_table(index='AccountId',
+                                                   columns=event_column,
+                                                   values='EventId',
+                                                   aggfunc='count',
+                                                   fill_value=0).reset_index()
+
+    # Merge only the necessary event count columns back to the original DataFrame
+    merged_df = df.merge(event_counts_df, on='AccountId', how='left')
+
+    # Logging details
+    logger.debug(f'Subscriber totals after {event_column} merge: {merged_df["Subscriber"].value_counts()}')
+    logger.debug(f'Final DataFrame shape after {event_column} merge: {merged_df.shape}')
+    logger.debug(f'Final columns after {event_column} merge: {merged_df.columns}')
+
+    # Execution time calculation
+    elapsed_time = timedelta(seconds=perf_counter() - start)
+    logger.info(f'{event_column} counts complete. Execution Time: {elapsed_time.total_seconds():.2f} seconds')
+
+    return merged_df
+"""
 def genre_counts(df, logger):
+    start = perf_counter()
+
+    # Create a copy to avoid modifying the original DataFrame
+    df = df.copy()
+
+    # Fill NaN values in 'EventGenre' and filter event types
+    df['EventGenre'] = df['EventGenre'].fillna('None')
+    df_filtered = df[df['EventType'].isin(['Live', 'Virtual', 'Subscriptions'])]
+
+    logger.debug(f'Subscriber totals before genre merge: {df["Subscriber"].value_counts()}')
+
+    # Drop duplicates based on AccountId, EventGenre, and EventId
+    unique_events_df = df_filtered.drop_duplicates(subset=['AccountId', 'EventGenre', 'EventId'])
+
+    # Pivot to count the number of events per genre for each AccountId
+    genre_counts_df = unique_events_df.pivot_table(index='AccountId',
+                                                   columns='EventGenre',
+                                                   values='EventId',
+                                                   aggfunc='count',
+                                                   fill_value=0).reset_index()
+
+    # Merge only necessary genre count columns back to original DataFrame
+    merged_df = df.merge(genre_counts_df, on='AccountId', how='left')
+
+    # Logging details
+    logger.debug(f'Subscriber totals after genre merge: {merged_df["Subscriber"].value_counts()}')
+    logger.debug(f'Final DataFrame shape: {merged_df.shape}')
+    logger.debug(f'Final columns: {merged_df.columns}')
+
+    # Execution time calculation
+    elapsed_time = timedelta(seconds=perf_counter() - start)
+    logger.info(f'Genre counts complete. Execution Time: {elapsed_time.total_seconds():.2f} seconds')
+
+    return merged_df
+def old_genre_counts(df, logger):
     start = perf_counter()
 
     # Fill NaN values in 'EventGenre' with a placeholder
@@ -561,6 +650,7 @@ def genre_counts(df, logger):
     logger.info(f'genre counts complete. Execution Time: {formatted_timing}')
 
     return merged_df
+"""
 """
 Function: state_and_city_processing
 
@@ -1054,7 +1144,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # Set DonationAmount to 0 for those records
     df.loc[indices_to_zero, 'DonationAmount'] = 0
     logger.debug(f'Donation handling complete.')
-    logger.info(f'raw columns: {df.columns}')
+    logger.debug(f'raw columns: {df.columns}')
 
     # TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
     #df['NetTxn'] = df['TicketTotal'] + df['DonationAmount']
@@ -1071,7 +1161,11 @@ def final_processing_and_output(df, output_file, logger, processDonations):
                    'Quantity', 'ItemPrice', 'TicketTotal', 'PriceLevel', 'AmountPaid', 'DonationName', 'DonationAmount',#'Total',
                    'DiscountCode', 'DiscountTotal', 'PreDiscountTotal', 'UnitDiscount', 'UnitDiscountType',
                    'ChorusMember','DuesTxn','Student','Subscriber','PatronStatus',
-                   'Choral','Brass','Classical', 'Contemporary', 'Dance']
+                   'Choral','Brass','Classical', 'Contemporary', 'Dance',
+                    'Standard', 'Headliner', 'Bach', 'Mission', 'Local Favorite',
+                    'Mechanics Hall', 'JMAC', 'Trinity Lutheran', 'The Hanover Theatre', 'Prior Center', 'Tuckerman Hall', 'First Unitarian','Curtis Hall', 'First Baptist',
+                    #'Washburn', 'None', 'Curtis Hall', 'First Baptist', 'St Johns', 'Razzo Hall', 'Indian Ranch',  'Wesley United', 'Wamsworks', 'Brooks Hall', 'Shapiro Hall', 'Harvard Unitarian', 'St Paul'
+    ]
 
     # write results to output file for only output columns.
     output_df = df[output_cols]
@@ -1382,11 +1476,13 @@ def get_patron_details(df,
                     df[col] = np.nan
 
         # Define the initial set of columns needed
-        initial_columns = ['AccountName', 'AccountId','ContactId','EventStatus',
+        initial_columns = ['AccountName', 'AccountId','ContactId','EventStatus','EventClass','EventVenue',
                             'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'Email',
                             'Quantity', 'ItemPrice', 'CreatedDate', 'EventDate', 'EventName',
                             'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn', 'Season', 'Student',
-                            'EventGenre', 'Choral', 'Brass', 'Classical', 'Contemporary', 'Dance']
+                            'EventGenre', 'Choral', 'Brass', 'Classical', 'Contemporary', 'Dance',
+                           'Headliner','Local Favorite','Standard','Mission','Bach',
+                           'Mechanics Hall','Tuckerman Hall','JMAC','The Hanover Theatre']
 
         # Select only the relevant columns from the DataFrame
         df = df[initial_columns]
@@ -1410,15 +1506,30 @@ def get_patron_details(df,
         logger.debug(f'bulk output shape: {df.shape}')
         logger.debug(f'bulk output columns: {df.columns}')
 
-        # genre scores require aggregating full history
-        logger.debug('Calculating genre scores...')
-        genre_df = mod.calculate_genre_scores(df, logger)
-        logger.debug(f'genre shape: {genre_df.shape}')
-        logger.debug(f'genre scores columns: {df.columns}')
+        # genre, class and venue scores require aggregating full history
+        logger.debug('Calculating genre, class and venue scores...')
+        #genre_df = mod.calculate_genre_scores(df, logger)
+        #df = df.merge(genre_df,on='AccountId',how='left')
 
-        df = df.merge(genre_df,on='AccountId',how='left')
-        logger.debug(f'Genre columns: {df.columns}')
-        del genre_df
+        logger.debug('Calculating genre scores...')
+        genre_scores = mod.calculate_event_scores(df, logger, event_column='EventGenre')   # Genre Scores
+        #logger.debug(f'Genre columns: {genre_scores.columns}')
+
+        logger.debug('Calculating class scores...')
+        class_scores = mod.calculate_event_scores(df, logger, event_column='EventClass')   # Class Scores
+        #logger.debug(f'Genre columns: {class_scores.columns}')
+
+        logger.debug('Calculating venue scores...')
+        venue_scores = mod.calculate_event_scores(df, logger, event_column='EventVenue')   # Venue Scores (removes one-offs)
+        #logger.debug(f'Genre columns: {venue_scores.columns}')
+
+        df = df.merge(genre_scores,on='AccountId',how='left')
+        df = df.merge(class_scores,on='AccountId',how='left')
+        df = df.merge(venue_scores,on='AccountId',how='left')
+
+        logger.debug(f'Score columns: {df.columns}')
+        #del genre_df
+        del genre_scores,class_scores,venue_scores
 
         logger.debug(f'Subscriber passed into Calc: {df["Subscriber"].value_counts()}')
 
@@ -1465,7 +1576,11 @@ def get_patron_details(df,
         keep_columns = ['AccountName','AccountId','ContactId','FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
                         'PatronStatus',#'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
                         'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BrassScore',
-                        'PreferredGenre','PreferenceConfidence','Omni','Entropy',
+                        'HeadlinerScore','StandardScore','Local FavoriteScore','BachScore','MissionScore',
+                        'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
+                        'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreOmni','EventGenreEntropy',
+                        'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueOmni','EventVenueEntropy',
+                        'PreferredEventClass','EventClassPreferenceConfidence','EventClassOmni','EventClassEntropy',
                         'FirstEvent', 'FirstEventDate','SecondEvent', 'SecondEventDate','PenultimateEvent', 'PenultimateEventDate', 'LatestEvent','LatestEventDate', 'LatestSeason'
                         ]
 
@@ -1572,12 +1687,16 @@ def get_patron_details(df,
             logger.info(f'{new_counts} new contacts had Lat/Long added.')
 
             # arranging columns
-            output_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'PreferredGenre',
-                           'PreferenceConfidence','Lifespan', 'LatestSeason', 'RegionAssignment',
+            output_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason', 'RegionAssignment',
                            'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
                            'RecencyScore', 'FrequencyScore', 'MonetaryScore','CLV_Score',
+                           'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreOmni','EventGenreEntropy',
+                           'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueOmni','EventVenueEntropy',
+                           'PreferredEventClass','EventClassPreferenceConfidence','EventClassOmni','EventClassEntropy',
                            'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
-                           'PatronStatus','Omni','Subscriber', 'ChorusMember', 'DuesTxn',
+                           'HeadlinerScore','StandardScore','Local FavoriteScore','MissionScore','BachScore',
+                           'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
+                           'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn',
                            'FrequentBulkBuyer', 'Student',
                            'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap',
                            'FirstEvent', 'FirstEventDate', 'SecondEvent',
@@ -1600,11 +1719,11 @@ def get_patron_details(df,
 
             # arranging columns
             summary_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason',
-                            'PreferredGenre', 'PreferenceConfidence','RegionAssignment',
+                            'PreferredEventGenre', 'PreferenceConfidence','RegionAssignment',
                             'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
                             'RecencyScore', 'FrequencyScore', 'MonetaryScore','CLV_Score',
                             #'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
-                            'PatronStatus','Omni','Subscriber', 'ChorusMember', 'DuesTxn',
+                            'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn',
                             'FrequentBulkBuyer', 'Student',
                             'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap',
                             'FirstEvent', 'FirstEventDate', 'SecondEvent',
@@ -1612,6 +1731,23 @@ def get_patron_details(df,
                             'LatestEvent', 'LatestEventDate',
                             'FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
                             'Latitude', 'Longitude', 'ZIP+4','AccountId']
+            summary_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason', 'RegionAssignment',
+             'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
+             'RecencyScore', 'FrequencyScore', 'MonetaryScore',#'CLV_Score',
+             'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreOmni',#'EventGenreEntropy',
+             'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueOmni',#'EventVenueEntropy',
+             'PreferredEventClass','EventClassPreferenceConfidence','EventClassOmni',#'EventClassEntropy',
+             #'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
+             #'HeadlinerScore','StandardScore','Local FavoriteScore','MissionScore','BachScore',
+             #'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
+             'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn',
+             'FrequentBulkBuyer', 'Student',
+             'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap',
+             'FirstEvent', 'FirstEventDate', 'SecondEvent',
+             'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
+             'LatestEvent', 'LatestEventDate',
+             'FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
+             'Latitude', 'Longitude', 'ZIP+4','AccountId']
 
             summary_df = df[summary_cols]
             summary_output_file = 'summary_' + patrons_file
