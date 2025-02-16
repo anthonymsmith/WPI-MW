@@ -98,7 +98,7 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6):
     event_df['Entropy'] = event_df.drop(columns=['AccountId', 'Frequency']).apply(calculate_entropy, axis=1)
 
     # Invert entropy to quantify strength of preference (higher entropy = weaker preference)
-    event_df['RawPreferenceStrength'] = 1 / (0.6 + event_df['Entropy']).clip(upper=2)
+    event_df['RawPreferenceStrength'] = 1 / (0.8 + event_df['Entropy']).clip(upper=2)
 
     # Determine the preferred category for each AccountId
     event_df[f'Preferred{event_column}'] = event_df.drop(columns=['AccountId', 'Entropy', 'RawPreferenceStrength', 'Frequency']).idxmax(axis=1)
@@ -106,31 +106,43 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6):
     # Add 'Score' suffix to relevant columns
     event_df.columns = [col + 'Score' if col not in ['AccountId', f'Preferred{event_column}', 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col for col in event_df.columns]
 
-    # Set 'Omni' flag based on entropy threshold
-    entropy_threshold = 1.5
-    event_df['Omni'] = event_df['Entropy'] > entropy_threshold
-
-    # Adjust confidence calculation based on attendance frequency
-    confidence_threshold = 10
+    # Compute Event Count Weighting (more gradual scaling)
     max_events = event_df['Frequency'].max()
+    # log smoothing to decrease weighting for lower frequency attendance
+    event_df['EventCountWeighting'] = np.log1p(1 + event_df['Frequency']) / np.log1p(1 + max_events)
 
-    event_df['EventCountWeighting'] = np.where(
-        event_df['Frequency'] > confidence_threshold,
-        (np.log1p(1 + event_df['Frequency']) + (event_df['Frequency'] - confidence_threshold) ** 0.5) / np.log1p(1 + max_events),
-        np.log1p(1 + event_df['Frequency']) / np.log1p(1 + max_events)
-    )
+    # Reduce Preference Strength for low event counts.
+    low_event_mask = event_df['Frequency'] <= 3
+    event_df.loc[low_event_mask, 'RawPreferenceStrength'] *= 0.5  # Reduce weight for very few events
 
-    # Adjust PreferenceConfidence with dynamic weighting
+    # Adjust PreferenceConfidence with a controlled weighted sum instead of multiplication
+    alpha = 0.4  # Controls balance between preference strength and event weighting
     event_df['PreferenceConfidence'] = np.clip(
-        event_df['RawPreferenceStrength'] * event_df['EventCountWeighting'] * 100,
+        ((1 - alpha) * event_df['RawPreferenceStrength'] + alpha * event_df['EventCountWeighting']) * 100,
         a_min=0,  # Minimum allowed value
         a_max=100  # Maximum allowed value
     )
 
+    # Set preference strength flag based on entropy threshold
+    # Define conditions
+    entropy_threshold = 1.1
+    conditions = [
+        event_df['Entropy'] > entropy_threshold,    # Omni
+        event_df['PreferenceConfidence'] > 90,      # High
+        event_df['PreferenceConfidence'] > 70,      # Strong
+        event_df['PreferenceConfidence'] > 50]      # Good
+                                                    # Neutral for < 50
+
+    # Define corresponding labels.
+    choices = ['Omni', 'High','Strong', 'Good']
+
+    # Apply vectorized conditional assignment
+    event_df['Strength'] = np.select(conditions, choices, default='Neutral')
+
     # Rename key columns to avoid conflicts when merging multiple event scores
     event_df = event_df.rename(columns={
         'Entropy': f'{event_column}Entropy',
-        'Omni': f'{event_column}Omni',
+        'Strength': f'{event_column}Strength',
         'RawPreferenceStrength': f'{event_column}RawPreferenceStrength',
         'Frequency': f'{event_column}Frequency',
         'EventCountWeighting': f'{event_column}EventCountWeighting',
@@ -196,56 +208,6 @@ def calculate_genre_scores(df, logger):
     # Add a suffix of 'Score' to EventGenre columns
     genre_df.columns = [col + 'Score' if col not in ['AccountId', 'PreferredGenre', 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col for col in genre_df.columns]
     logger.debug(f'Genre columns: {genre_df.columns}')
-
-# Set 'Omni' flag based on entropy threshold
-    entropy_threshold = 1.2  # Define your entropy threshold for omnivores
-    genre_df['Omni'] = genre_df['Entropy'] > entropy_threshold
-
-    # Define a more gradual threshold for confidence boost
-    confidence_threshold = 15  # Increased from 10 to slow confidence growth
-
-    # Log scaling of preference strength with a controlled exponential boost
-    max_events = genre_df['Frequency'].max()
-
-    # Apply a smoother weighting function
-    above_threshold = genre_df['Frequency'] > confidence_threshold
-    genre_df['EventCountWeighting'] = np.where(
-        above_threshold,
-        (np.log1p(1 + genre_df['Frequency']) + 0.3 * (genre_df['Frequency'] - confidence_threshold) ** 0.4) / np.log1p(1 + max_events),
-        np.log1p(1 + genre_df['Frequency']) / np.log1p(1 + max_events)
-    )
-
-    # Adjust PreferenceConfidence with dynamic weighting
-    genre_df['PreferenceConfidence'] = np.clip(
-        genre_df['RawPreferenceStrength'] * genre_df['EventCountWeighting'] * 100,
-        a_min=0,  # Minimum allowed value
-        a_max=100  # Maximum allowed value
-    )
-    """
-    # Define a threshold for when attendance should increase confidence more quickly
-    confidence_threshold = 10
-
-    # Log scaling of preference strength with an exponential boost for frequent attenders
-    max_events = genre_df['Frequency'].max()
-
-    above_threshold = genre_df['Frequency'] > confidence_threshold
-    genre_df['EventCountWeighting'] = np.where(
-        above_threshold,
-        (np.log1p(1 + genre_df['Frequency']) + (genre_df['Frequency'] - confidence_threshold) ** 0.5) / np.log1p(1 + max_events),
-        np.log1p(1 + genre_df['Frequency']) / np.log1p(1 + max_events)
-    )
-
-    # Adjust PreferenceConfidence with dynamic weighting
-    genre_df['PreferenceConfidence'] = np.clip(
-        genre_df['RawPreferenceStrength'] * genre_df['EventCountWeighting'] * 100,
-        a_min=0,  # Minimum allowed value
-        a_max=100  # Maximum allowed value
-    )
-    """
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Genre Scores complete. Execution Time: {formatted_timing}')
 
     return genre_df
 

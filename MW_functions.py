@@ -159,13 +159,34 @@ def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
                                    .replace([np.inf, -np.inf, np.nan], 0)
     )
 
-    cols = ['EventName', 'EventDate', 'EventVenue', 'EventPublicSupport', 'EventSponsor', 'EventTickets',
-            'EventAdvertising', 'EventArtistFees', 'EventVenueFees', 'EventHospitality', 'EventG/A','EventTotalSponsorship',
-            'EventRevenue', 'EventExpense', 'EventProfit', 'EventSalesPlan', 'EventRev/Expense', 'EventPctSalesPlan', 'EventCapacity', 'EventId',
-            'Season',
-            'EventStatus', 'EventType', 'EventClass', 'EventGenre', 'EventSubGenre']
+    keep_cols = ['EventName',
+                 'EventDate',
+                 'EventVenue',
+                 'EventPublicSupport',
+                 'EventSponsor',
+                 'EventTickets',
+                 'EventAdvertising',
+                 'EventArtistFees',
+                 'EventVenueFees',
+                 'EventHospitality',
+                 'EventG/A',
+                 'EventTotalSponsorship',
+                 'EventRevenue',
+                 'EventExpense',
+                 'EventProfit',
+                 'EventSalesPlan',
+                 'EventRev/Expense',
+                 'EventPctSalesPlan',
+                 'EventCapacity',
+                 'EventId',
+                 'Season',
+                 'EventStatus',
+                 'EventType',
+                 'EventClass',
+                 'EventGenre',
+                 'EventSubGenre']
 
-    res_df = res_df[cols]
+    res_df = res_df[keep_cols]
 
     # Save the processed data
     res_df.to_csv(PnLProcessed_file, index=False)
@@ -1578,9 +1599,9 @@ def get_patron_details(df,
                         'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BrassScore',
                         'HeadlinerScore','StandardScore','Local FavoriteScore','BachScore','MissionScore',
                         'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
-                        'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreOmni','EventGenreEntropy',
-                        'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueOmni','EventVenueEntropy',
-                        'PreferredEventClass','EventClassPreferenceConfidence','EventClassOmni','EventClassEntropy',
+                        'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreStrength','EventGenreEntropy',
+                        'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueStrength','EventVenueEntropy',
+                        'PreferredEventClass','EventClassPreferenceConfidence','EventClassStrength','EventClassEntropy',
                         'FirstEvent', 'FirstEventDate','SecondEvent', 'SecondEventDate','PenultimateEvent', 'PenultimateEventDate', 'LatestEvent','LatestEventDate', 'LatestSeason'
                         ]
 
@@ -1642,9 +1663,9 @@ def get_patron_details(df,
             logger.debug(f'original: {orig_df.columns}')
             logger.debug(f'original: {orig_df.head}')
 
-            # keep only most recent AccountName instance.
+            # keep only the most recent AccountName instance.
             # Note: using names as ContactId has changed, but AccountName is constant.
-            orig_df = orig_df.sort_values(['AccountName','RFMScore'])
+            orig_df = orig_df.sort_values(['AccountName','Recency (Months)'])
             orig_df = orig_df.groupby('AccountName').first().reset_index()
 
             # only run if the ZIP+4 format is wrong.
@@ -1690,9 +1711,9 @@ def get_patron_details(df,
             output_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason', 'RegionAssignment',
                            'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
                            'RecencyScore', 'FrequencyScore', 'MonetaryScore','CLV_Score',
-                           'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreOmni','EventGenreEntropy',
-                           'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueOmni','EventVenueEntropy',
-                           'PreferredEventClass','EventClassPreferenceConfidence','EventClassOmni','EventClassEntropy',
+                           'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreStrength','EventGenreEntropy',
+                           'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueStrength','EventVenueEntropy',
+                           'PreferredEventClass','EventClassPreferenceConfidence','EventClassStrength','EventClassEntropy',
                            'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
                            'HeadlinerScore','StandardScore','Local FavoriteScore','MissionScore','BachScore',
                            'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
@@ -1717,41 +1738,76 @@ def get_patron_details(df,
 
             logger.info(f'Full Patron results written to file: {patrons_file}')
 
-            # arranging columns
-            summary_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason',
-                            'PreferredEventGenre', 'PreferenceConfidence','RegionAssignment',
-                            'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
-                            'RecencyScore', 'FrequencyScore', 'MonetaryScore','CLV_Score',
-                            #'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
-                            'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn',
-                            'FrequentBulkBuyer', 'Student',
-                            'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap',
-                            'FirstEvent', 'FirstEventDate', 'SecondEvent',
-                            'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
-                            'LatestEvent', 'LatestEventDate',
-                            'FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
-                            'Latitude', 'Longitude', 'ZIP+4','AccountId']
-            summary_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason', 'RegionAssignment',
-             'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
-             'RecencyScore', 'FrequencyScore', 'MonetaryScore',#'CLV_Score',
-             'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreOmni',#'EventGenreEntropy',
-             'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueOmni',#'EventVenueEntropy',
-             'PreferredEventClass','EventClassPreferenceConfidence','EventClassOmni',#'EventClassEntropy',
-             #'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
-             #'HeadlinerScore','StandardScore','Local FavoriteScore','MissionScore','BachScore',
-             #'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
-             'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn',
-             'FrequentBulkBuyer', 'Student',
-             'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap',
-             'FirstEvent', 'FirstEventDate', 'SecondEvent',
-             'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
-             'LatestEvent', 'LatestEventDate',
-             'FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
-             'Latitude', 'Longitude', 'ZIP+4','AccountId']
+            # For a summary file, select key attributes and give them readable names.
+            summary_rename_map = {
+                'AccountName': 'Account Name',
+                'ContactId': 'Contact ID',
+                'Segment': 'Customer Segment',
+                'RFMScore': 'RFM Score',
+                'Lifespan': 'Customer Lifespan',
+                'LatestSeason': 'Most Recent Season',
+                'RegionAssignment': 'Geo Region',
+                'Recency (Months)': 'Recency (Months)',
+                'Frequency': 'Frequency',
+                'AYM': 'Average Yearly Monetary',
+                'GrowthScore': 'Growth Score',
+                'Regularity': 'Regularity',
+                'Monetary': 'Total Monetary',
+                'RecencyScore': 'Recency Score',
+                'FrequencyScore': 'Frequency Score',
+                'MonetaryScore': 'Monetary Score',
+                'PreferredEventGenre': 'Favorite Genre',
+                'EventGenrePreferenceConfidence': 'Genre Preference Confidence',
+                'EventGenreEntropy': 'Genre Entropy',
+                'EventGenreStrength': 'Genre Strength',
+                'PreferredEventVenue': 'Favorite Venue',
+                'EventVenuePreferenceConfidence': 'Venue Preference Confidence',
+                'EventVenueEntropy': 'Venue Entropy',
+                'EventVenueStrength': 'Venue Strength',
+                'PreferredEventClass': 'Favorite Class',
+                'EventClassPreferenceConfidence': 'Class Preference Confidence',
+                'EventClassEntropy': 'Class Entropy',
+                'EventClassStrength': 'Class Strength',
+                'PatronStatus': 'Patron Status',
+                'Subscriber': 'Is Subscriber',
+                'ChorusMember': 'In Chorus',
+                'DuesTxn': 'Dues Txn',
+                'FrequentBulkBuyer': 'Frequent Bulk Buyer',
+                'Student': 'Is Student',
+                'MonthsFromFirstEvent': 'Months Since First Event',
+                'MonthsToReturn': 'Months to Return',
+                'RecentEventYearsGap': 'Recent Event Gap (Years)',
+                'FirstEvent': 'First Event',
+                'FirstEventDate': 'First Event Date',
+                'SecondEvent': 'Second Event',
+                'SecondEventDate': 'Second Event Date',
+                'PenultimateEvent': 'Second-to-Last Event',
+                'PenultimateEventDate': 'Second-to-Last Event Date',
+                'LatestEvent': 'Most Recent Event',
+                'LatestEventDate': 'Most Recent Event Date',
+                'FirstName': 'First Name',
+                'LastName': 'Last Name',
+                'Email': 'Email Address',
+                'Address': 'Address',
+                'City': 'City',
+                'State': 'State',
+                'ZIP': 'ZIP Code',
+                'Latitude': 'Latitude',
+                'Longitude': 'Longitude',
+                'AccountId': 'Account ID'
+            }
+            # Create summary DataFrame with renaming in one step
+            summary_df = df[list(summary_rename_map.keys())].rename(columns=summary_rename_map)
 
-            summary_df = df[summary_cols]
-            summary_output_file = 'summary_' + patrons_file
-            summary_df.to_csv(summary_output_file, index=False)
+            # Save the summary DataFrame
+            #summary_output_file = 'summary_' + patrons_file
+            #summary_df.to_excel(summary_output_file, index=False)
+
+            # Define the output file name
+            summary_output_file = 'summary_' + patrons_file.replace('.csv', '.xlsx')  # Ensure the file has .xlsx extension
+            # Write to Excel (without index column)
+            summary_df.to_excel(summary_output_file, index=False)
+
 
             return df
 
@@ -1787,6 +1843,7 @@ Process:
 Returns:
     str: A unique SHA-256 hash string for the provided account name.
 """
+
 def generate_identifier(account_name):
     # Use SHA-256 hash function
     return hashlib.sha256(account_name.encode()).hexdigest()
@@ -1839,7 +1896,6 @@ Returns:
     None: If there is an error or no geocoding result is found.
 """
 def get_geocode_info(address):
-
 
     google_api_key = 'AIzaSyAC4jkZD-p7bkor1InDTyw2Q2ULXK23yLw'
     base_url = 'https://maps.googleapis.com/maps/api/geocode/json'

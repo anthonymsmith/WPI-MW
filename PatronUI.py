@@ -23,7 +23,7 @@ else:
     data = load_data(default_file)
 
 # Display the data
-st.write("### Raw Data", data)
+#st.write("### Raw Data", data)
 
 # Filter options
 st.sidebar.title("Filter Options")
