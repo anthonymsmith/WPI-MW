@@ -127,17 +127,18 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6):
     # Define conditions
     entropy_threshold = 1.1
     conditions = [
-        event_df['Entropy'] > entropy_threshold,    # Omni
-        event_df['PreferenceConfidence'] > 90,      # High
-        event_df['PreferenceConfidence'] > 70,      # Strong
-        event_df['PreferenceConfidence'] > 50]      # Good
-                                                    # Neutral for < 50
+        event_df['Entropy'] > entropy_threshold,    # Omnivore
+        event_df['PreferenceConfidence'] > 90,      # Focused
+        event_df['PreferenceConfidence'] > 60,      # Favors
+        event_df['PreferenceConfidence'] > 45,      # Mixed
+        event_df['Frequency'] <= 3,                 # Unclear
+        ]                                           # Unclear for remainder
 
     # Define corresponding labels.
-    choices = ['Omni', 'High','Strong', 'Good']
+    choices = ['Omnivore', 'Focused','Favors', 'Mixed','Unclear']
 
     # Apply vectorized conditional assignment
-    event_df['Strength'] = np.select(conditions, choices, default='Neutral')
+    event_df['Strength'] = np.select(conditions, choices, default='Unclear')
 
     # Rename key columns to avoid conflicts when merging multiple event scores
     event_df = event_df.rename(columns={
@@ -279,7 +280,7 @@ def calculate_growth_score(df, current_year):
     weighted_monetary = monetary_values * df['Weight'].values
 
     # Log transform monetary values to reduce impact of large values (optional)
-    log_monetary = np.log1p(weighted_monetary)  # log(1 + x) prevents log(0) errors
+    log_monetary = np.log1p(1 + weighted_monetary)  # log(1 + x) prevents log(0) errors
 
     # Fit weighted linear regression
     reg = LinearRegression().fit(fiscal_years, log_monetary)
@@ -583,22 +584,28 @@ def calculate_patron_metrics(df, logger):
 
     # Apply binning for RFM scores
     # Ensure Recency is numeric and clean
-    logger.info("Preparing Recency for binning...")
-
-        # Apply Recency binning
-    bins = [0, 120, 400, 700, 1500, 2000, float('inf')]
+    # Apply Recency binning
+    bins = [-1, 120, 400, 700, 1500, 2000, float('inf')]
     labels = [5, 4, 3, 2, 1, 0]
-    metrics_df['RecencyScore'] = pd.cut(metrics_df['Recency'], bins=bins, labels=labels, right=False).astype(int)
+    metrics_df['RecencyScore'] = pd.cut(metrics_df['Recency'], bins=bins, labels=labels, right=False)
 
-    bins = [0, 1, 3, 5, 8, 11, float('inf')]
+    # Convert to float first, then fill NaNs, and convert to int
+    metrics_df['RecencyScore'] = metrics_df['RecencyScore'].astype(float).fillna(0).astype(int)
+
+    # Apply Frequency binning
+    bins = [-1, 1, 3, 5, 8, 11, float('inf')]
     labels = [0, 1, 2, 3, 4, 5]
-    metrics_df['FrequencyScore'] = pd.cut(metrics_df['Frequency'], bins=bins, labels=labels, right=False).astype(int)
+    metrics_df['FrequencyScore'] = pd.cut(metrics_df['Frequency'], bins=bins, labels=labels, right=False)
+    metrics_df['FrequencyScore'] = metrics_df['FrequencyScore'].astype(float).fillna(0).astype(int)
+
     logger.info("Frequency Score done...")
 
-    bins = [0, 10, 80, 200, 400, 1000, float('inf')]
+    # Apply Monetary binning
+    bins = [-1, 10, 80, 200, 400, 1000, float('inf')]
     labels = [0, 1, 2, 3, 4, 5]
-    metrics_df['MonetaryScore'] = pd.cut(metrics_df['Monetary'], bins=bins, labels=labels, right=False).astype(int)
-    metrics_df['MonetaryScore'] = metrics_df['MonetaryScore'].fillna(0).astype(int)
+    metrics_df['MonetaryScore'] = pd.cut(metrics_df['Monetary'], bins=bins, labels=labels, right=False)
+    metrics_df['MonetaryScore'] = metrics_df['MonetaryScore'].astype(float).fillna(0).astype(int)
+
     logger.info("Monetary Score done...")
 
     metrics_df['RFMScore'] = metrics_df['RecencyScore'] + metrics_df['FrequencyScore'] + metrics_df['MonetaryScore']

@@ -490,17 +490,26 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
     sales_df['Student'] = sales_df['TicketType'].str.contains("Student", na=False)
 
     # Add Subscriber field based on subscription practice.
-    #print(sales_df[sales_df['EventName_sales'].str.contains("Subscription", case=False, na=False)])
 
     # Ensure EventName_sales is treated as a string
     sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
 
-    # Define a helper function to determine the subscription status for each AccountId
-    sales_df['Subscriber'] = sales_df['EventName_sales'].apply(
-        lambda x: 'current' if '2024-2025' in x.lower() or '24-25' in x.lower() else (
-            'previous' if 'subscri' in x.lower() else 'never'
-        )
+# Ensure EventName_sales is a string to avoid errors
+    sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
+
+    # Define the ordered categorical column for correct aggregation
+    sales_df['Subscriber'] = pd.Categorical(
+        sales_df['EventName_sales'].apply(
+            lambda x: (
+                'current' if '2024-2025' in x.lower() or '24-25' in x.lower()
+                else 'previous' if 'subscri' in x.lower()
+                else 'never'
+            )
+        ),
+        categories=['never', 'previous', 'current'],  # Ensures correct order for max()
+        ordered=True
     )
+
     logger.debug(f'Subscriber initial totals: {sales_df["Subscriber"].value_counts()}')
 
     logger.debug(f'Venue and Attribute columns: {sales_df.columns}')
@@ -1167,7 +1176,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     logger.debug(f'Donation handling complete.')
     logger.debug(f'raw columns: {df.columns}')
 
-    # TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
+    # Need to Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
     #df['NetTxn'] = df['TicketTotal'] + df['DonationAmount']
 
     # Strip to final set up columns for transaction file output.
@@ -1210,40 +1219,6 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     logger.debug(f'final processing return df columns:{df.columns}')
 
     return df # the full data frame is needed for Patron details
-"""
-def region_processing(df, filename, logger):
-    start = perf_counter()
-
-    # add in ZIP-Region Assignments
-    raw_regions_df = pd.read_csv(filename, dtype={'PHYSICAL ZIP': str,'ZIP': str})
-
-    # Extract the first 5 digits of the ZIP code and add leading zeros if necessary
-    raw_regions_df['ZIP'] = raw_regions_df['ZIP'].str[:5].str.zfill(5)
-    raw_regions_df = raw_regions_df[['ZIP','RegionAssignment']].drop_duplicates()
-    #regions_df = raw_regions_df.groupby('ZIP',as_index=False).first()
-    regions_df = raw_regions_df
-    # strip ZIP+4
-    # regions_df['ZIP'] = regions_df['ZIP'].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].str[:5].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].apply(lambda x: '{0:0>5}'.format(x))
-    logger.debug(regions_df)
-    logger.debug(regions_df.shape)
-    logger.debug(regions_df.drop_duplicates().shape)
-
-    # dm_df = dm_df.merge(regions_df, on='ZIP', how='left')
-    logger.debug(f'regions pre merge: {df.shape}')
-
-    dm_df = df.merge(regions_df, on='ZIP', how='left')
-
-    logger.debug(f'regions post merge: {dm_df.shape}')
-    logger.debug(f'Results With regions {dm_df.columns}')
-
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-
-    return dm_df, formatted_timing
-"""
 
 def add_regions(df, regions_file, logger):
     start = perf_counter()
@@ -1471,9 +1446,6 @@ def get_patron_details(df,
                        reengaged_threshold,
                        logger):
 
-    # Change to working directory
-    #os.chdir(data_dir)
-
     try:
         # Preprocess the data
         logger.debug('Preprocessing patron data...')
@@ -1511,7 +1483,7 @@ def get_patron_details(df,
         df = df.sort_values(['AccountId', 'CreatedDate'])
         df = df.rename(columns={'Season':'LatestSeason'})
 
-        logger.debug(f'Subscriber totals for filtered fpatron details: {df["Subscriber"].value_counts()}')
+        logger.debug(f'Subscriber totals for filtered patron details: {df["Subscriber"].value_counts()}')
 
         logger.debug(f'Patron Txn columns: {df.columns}')
 
@@ -1528,10 +1500,6 @@ def get_patron_details(df,
         logger.debug(f'bulk output columns: {df.columns}')
 
         # genre, class and venue scores require aggregating full history
-        logger.debug('Calculating genre, class and venue scores...')
-        #genre_df = mod.calculate_genre_scores(df, logger)
-        #df = df.merge(genre_df,on='AccountId',how='left')
-
         logger.debug('Calculating genre scores...')
         genre_scores = mod.calculate_event_scores(df, logger, event_column='EventGenre')   # Genre Scores
         #logger.debug(f'Genre columns: {genre_scores.columns}')
@@ -1564,7 +1532,8 @@ def get_patron_details(df,
         # add Customer Lifetime Value
         # Not ready for primetime. Needs to account for dormant patrons.
         metrics_df = calculate_CLV_score(metrics_df, logger)
-        #logger.debug(f'CLV added')
+
+    #logger.debug(f'CLV added')
 
         # plots
         #R = metrics_df['RecencyZ']
@@ -1582,16 +1551,17 @@ def get_patron_details(df,
 
         logger.debug(f'final patron model shape: {metrics_df.shape}')
         logger.debug(f'final patron model columns: {metrics_df.columns}')
-        ##logger.debug(f'Final metrics_df: {metrics_df.head}')
 
         # Modeling is complete so we can prune transaction columns.
         # Keep the most recent entry for each 'AccountId'
         logger.debug('Keeping only most recent Contact transaction address...')
+
         # belt and suspenders de-dup
+        df = df.sort_values(by=['CreatedDate'])
         last_entry_df = df.drop_duplicates('AccountId', keep='last')
 
-        logger.debug(f'Last Entry columns: {last_entry_df.columns}')
         logger.debug(f'Last Entry shape: {last_entry_df.shape}')
+        logger.debug(f'Last Entry columns: {last_entry_df.columns}')
 
         #final prep
         keep_columns = ['AccountName','AccountId','ContactId','FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
@@ -1613,9 +1583,10 @@ def get_patron_details(df,
         df = last_entry_df.merge(metrics_df, on='AccountId', how='left').sort_values(by=['MonetaryScore','FrequencyScore','RecencyScore'], ascending=False)
         logger.debug(f'pre-location shape: {df.shape}')
         logger.debug(f'pre-location columns: {df.columns}')
-        logger.debug(f'pre-location df: {df.head}')
+        logger.debug(f'Subscriber after final merge: {df["Subscriber"].value_counts()}')
 
-        # convert Days to Months
+
+    # convert Days to Months
         # List of columns to convert
         columns_to_convert = ['DaysFromFirstEvent', 'DaysToReturn', 'DaysFromPenultimateEvent']
 
@@ -1757,16 +1728,16 @@ def get_patron_details(df,
                 'FrequencyScore': 'Frequency Score',
                 'MonetaryScore': 'Monetary Score',
                 'PreferredEventGenre': 'Favorite Genre',
-                'EventGenrePreferenceConfidence': 'Genre Preference Confidence',
-                'EventGenreEntropy': 'Genre Entropy',
+                #'EventGenrePreferenceConfidence': 'Genre Preference Confidence',
+                #'EventGenreEntropy': 'Genre Entropy',
                 'EventGenreStrength': 'Genre Strength',
                 'PreferredEventVenue': 'Favorite Venue',
-                'EventVenuePreferenceConfidence': 'Venue Preference Confidence',
-                'EventVenueEntropy': 'Venue Entropy',
+                #'EventVenuePreferenceConfidence': 'Venue Preference Confidence',
+                #'EventVenueEntropy': 'Venue Entropy',
                 'EventVenueStrength': 'Venue Strength',
                 'PreferredEventClass': 'Favorite Class',
-                'EventClassPreferenceConfidence': 'Class Preference Confidence',
-                'EventClassEntropy': 'Class Entropy',
+                #'EventClassPreferenceConfidence': 'Class Preference Confidence',
+                #'EventClassEntropy': 'Class Entropy',
                 'EventClassStrength': 'Class Strength',
                 'PatronStatus': 'Patron Status',
                 'Subscriber': 'Is Subscriber',
@@ -1981,7 +1952,119 @@ def update_zip_plus4_info(df, RFMScoreThreshold):
             df['ZIP+4'] = df['ZIP'] + '-' + zip_plus4
     return df
 
-def calculate_retention_and_churn(df, logger):
+import pandas as pd
+
+import pandas as pd
+
+def calculate_retention_and_churn(df, logger=None):
+    """
+    Calculate Year-over-Year (YoY) and 3-Year cumulative retention and churn rates for patrons.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Input DataFrame with at least the following columns:
+        - 'AccountId': Unique identifier for each patron
+        - 'EventDate': Date of the patron's activity or attendance
+
+    logger : logging.Logger, optional
+        Logger instance for status logging.
+
+    Returns:
+    --------
+    pd.DataFrame
+        A DataFrame indexed by FiscalYear, containing:
+        - Total Patrons Previous Year
+        - New Patrons Previous Year
+        - Retained New Patrons
+        - Retained All Patrons
+        - Churned Existing Patrons
+        - New Patron Retention & Churn Rates
+        - 1-Year (YoY) Retention & Churn Rates
+        - 3-Year Retention & Churn Rates (excluding recent joiners)
+    """
+
+    # Convert to datetime and assign fiscal year
+    df['EventDate'] = pd.to_datetime(df['EventDate'])
+    df['FiscalYear'] = df['EventDate'].dt.year + (df['EventDate'].dt.month >= 7)
+    df['FirstFiscalYear'] = df.groupby('AccountId')['FiscalYear'].transform('min')
+
+    retention_data = []
+    fiscal_years = sorted(df['FiscalYear'].unique())
+
+    for i in range(1, len(fiscal_years)):
+        current_year = fiscal_years[i]
+        prev_year = fiscal_years[i - 1]
+
+        #if logger:
+        #    logger.info(f"Calculating retention for fiscal year {current_year}")
+
+        # Slice patrons
+        patrons_prev = df[df['FiscalYear'] == prev_year]['AccountId'].unique()
+        new_prev = df[df['FirstFiscalYear'] == prev_year]['AccountId'].unique()
+
+        # New Patron Retention
+        retained_new = df[(df['AccountId'].isin(new_prev)) &
+                          (df['FiscalYear'] == current_year)]['AccountId'].nunique()
+        new_retention_rate = retained_new / len(new_prev) if len(new_prev) > 0 else None
+        new_churn_rate = 1 - new_retention_rate if new_retention_rate is not None else None
+
+        # Overall YoY Retention
+        retained_all = df[(df['AccountId'].isin(patrons_prev)) &
+                          (df['FiscalYear'] == current_year)]['AccountId'].nunique()
+        overall_retention_rate = retained_all / len(patrons_prev) if len(patrons_prev) > 0 else None
+        overall_churn_rate = 1 - overall_retention_rate if overall_retention_rate is not None else None
+
+        # Existing Patron Churn (those not new last year)
+        existing_prev = list(set(patrons_prev) - set(new_prev))
+        retained_existing = df[(df['AccountId'].isin(existing_prev)) &
+                               (df['FiscalYear'] == current_year)]['AccountId'].nunique()
+        churned_existing = len(existing_prev) - retained_existing
+        churn_rate_existing = churned_existing / len(existing_prev) if len(existing_prev) > 0 else None
+
+        # 3-Year Retention
+        if i >= 3:
+            # Exclude recent joiners: only include patrons with FirstFiscalYear <= current_year - 2
+            eligible_3y_patrons = df[df['FirstFiscalYear'] <= current_year - 2]['AccountId'].unique()
+            recent_years = [current_year - 2, current_year - 1, current_year]
+
+            patrons_3y = set(df[(df['AccountId'].isin(eligible_3y_patrons)) &
+                                (df['FiscalYear'].isin(recent_years))]['AccountId'])
+
+            retained_3y = set(df[(df['AccountId'].isin(patrons_3y)) &
+                                 (df['FiscalYear'] == current_year)]['AccountId'])
+
+            retained_count = len(retained_3y)
+            total_3y = len(patrons_3y)
+            retention_3y = retained_count / total_3y if total_3y > 0 else None
+            churn_3y = 1 - retention_3y if retention_3y is not None else None
+        else:
+            total_3y = None
+            retained_count = None
+            retention_3y = None
+            churn_3y = None
+
+        # Append results
+        retention_data.append({
+            'FiscalYear': current_year,
+            'Total Patrons Previous Year': len(patrons_prev),
+            'New Patrons Previous Year': len(new_prev),
+            'Retained New Patrons': retained_new,
+            'New Patron Retention Rate': new_retention_rate,
+            'New Patron Churn Rate': new_churn_rate,
+            'Retained All Patrons': retained_all,
+            '1-Year Retention Rate': overall_retention_rate,
+            '1-Year Churn Rate': overall_churn_rate,
+            'Churned Existing Patrons': churned_existing,
+            'Existing Patron Churn Rate': churn_rate_existing,
+            'Three Year Patrons': total_3y,
+            'Three Year Retained Patrons': retained_count,
+            '3-Year Retention Rate': retention_3y,
+            '3-Year Churn Rate': churn_3y
+        })
+
+    return pd.DataFrame(retention_data).set_index('FiscalYear')
+def old_calculate_retention_and_churn(df, logger):
     # Ensure EventDate is datetime
     df['EventDate'] = pd.to_datetime(df['EventDate'])
 
