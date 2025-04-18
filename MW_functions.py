@@ -451,10 +451,10 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
     logger.debug(sales_df.dtypes)
 
     # Load the chorus member list and drop missing AccountNames in one step
-    chorus_df = pd.read_csv(chorus_list_file, usecols=['AccountName']).dropna()
+    chorus_df = pd.read_excel(chorus_list_file, usecols=['Account Name']).dropna()
 
     # Create a set of unique AccountNames
-    chorus_members = set(chorus_df['AccountName'])
+    chorus_members = set(chorus_df['Account Name'])
 
     # Add the 'ChorusMember' column to sales_df
     sales_df['ChorusMember'] = sales_df['AccountName'].isin(chorus_members)
