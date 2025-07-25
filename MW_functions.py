@@ -16,9 +16,10 @@ Date: September, 2024
 
 import pandas as pd
 import numpy as np
+import re
 import Model_functions as mod
 from datetime import datetime, timedelta
-from timeit import default_timer as timer
+from time import perf_counter
 import hashlib
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
@@ -51,10 +52,11 @@ Returns:
     pd.DataFrame: The cleaned and processed DataFrame containing event data.
 """
 def load_event_manifest(manifest_file, logger):
-    start = timer()
+    start = perf_counter()
 
     # Load event manifest file and fix column names
-    event_df = pd.read_excel(manifest_file)
+    event_df = pd.read_excel(manifest_file, sheet_name='EventManifest')
+    logger.debug(f'Raw Event Manifest {event_df.head()}')
 
     # Fix dates
     event_df['EventDate'] = pd.to_datetime(event_df['EventDate'].copy()).dt.date
@@ -66,12 +68,12 @@ def load_event_manifest(manifest_file, logger):
     # Fill missing values
     columns_to_fill = ['EventGenre', 'EventClass', 'EventStatus', 'EventSubGenre', 'EventVenue']
     event_df[columns_to_fill] = event_df[columns_to_fill].fillna('None')
-    event_df['EventCapacity'].fillna(1, inplace=True)
+    event_df['EventCapacity'] = event_df['EventCapacity'].fillna(1)
 
     # Sort dataframe
     event_df = event_df.sort_values(by=['EventDate', 'EventName', 'EventInstance'], ascending=False)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Events loaded. Execution Time: {formatted_timing}')
@@ -109,7 +111,7 @@ Returns:
     pd.DataFrame: The original event DataFrame (unmodified), though the processed PnL data is saved to the specified CSV file.
 """
 def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
-    start = timer()
+    start = perf_counter()
 
     PnL_df = pd.read_excel(Pnl_file,sheet_name='PnLSourceData')
     logger.debug(f'raw PnL {PnL_df.columns}')
@@ -131,6 +133,8 @@ def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
 
     # Merge dataframes
     logger.debug(f'PnL pre merge: {PnL_df.shape}')
+    logger.debug(f'PnL columns {PnL_df.columns}')
+    logger.debug(f'event_df columns{event_df.columns}')
     res_df = event_df.merge(PnL_df, how='left', on='EventId').sort_values('EventDate', ascending=False)
     logger.debug(f'PnL post merge: {PnL_df.shape}')
 
@@ -153,20 +157,44 @@ def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
     res_df['EventPctSalesPlan'] = safe_divide(res_df['EventTickets'], res_df['EventSalesPlan'])
 
     #replace with 0 if salesplan is 0. Belt-and-suspenders...
-    res_df['EventPctSalesPlan'].replace([np.inf, -np.inf,np.nan], 0, inplace=True)
+    #res_df['EventPctSalesPlan'].replace([np.inf, -np.inf,np.nan], 0, inplace=True)
+    res_df['EventPctSalesPlan'] = (res_df['EventPctSalesPlan']
+                                   .replace([np.inf, -np.inf, np.nan], 0)
+    )
 
-    cols = ['EventName', 'EventDate', 'EventVenue', 'EventPublicSupport', 'EventSponsor', 'EventTickets',
-            'EventAdvertising', 'EventArtistFees', 'EventVenueFees', 'EventHospitality', 'EventG/A','EventTotalSponsorship',
-            'EventRevenue', 'EventExpense', 'EventProfit', 'EventSalesPlan', 'EventRev/Expense', 'EventPctSalesPlan', 'EventCapacity', 'EventId',
-            'Season',
-            'EventStatus', 'EventType', 'EventClass', 'EventGenre', 'EventSubGenre']
+    keep_cols = ['EventName',
+                 'EventDate',
+                 'EventVenue',
+                 'EventPublicSupport',
+                 'EventSponsor',
+                 'EventTickets',
+                 'EventAdvertising',
+                 'EventArtistFees',
+                 'EventVenueFees',
+                 'EventHospitality',
+                 'EventG/A',
+                 'EventTotalSponsorship',
+                 'EventRevenue',
+                 'EventExpense',
+                 'EventProfit',
+                 'EventSalesPlan',
+                 'EventRev/Expense',
+                 'EventPctSalesPlan',
+                 'EventCapacity',
+                 'EventId',
+                 'Season',
+                 'EventStatus',
+                 'EventType',
+                 'EventClass',
+                 'EventGenre',
+                 'EventSubGenre']
 
-    res_df = res_df[cols]
+    res_df = res_df[keep_cols]
 
     # Save the processed data
     res_df.to_csv(PnLProcessed_file, index=False)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'PnL data written to {PnLProcessed_file}. Execution Time: {formatted_timing}')
@@ -194,7 +222,7 @@ Returns:
     pd.DataFrame: The processed DataFrame containing the sales data with renamed columns and only recent records.
 """
 def load_sales_file(sales_file, yearsOfData, logger):
-    start = timer()
+    start = perf_counter()
 
     # load sales file and fix column names
     sales_df = pd.read_csv(sales_file, encoding= 'latin1', low_memory=False)
@@ -221,7 +249,7 @@ def load_sales_file(sales_file, yearsOfData, logger):
         'Ticket Order: Order Origin': 'Origin',
         'Ticket Order: Order Total': 'Total',
         'Ticket Order: Payment Method': 'PaymentMethod',
-        'Contact ID': 'ContactId',
+        'Contact: Contact ID': 'ContactId',
         'Contact: Account Name: Account Name': 'AccountName',
         'Ticket Order: Order Source': 'OrderSource',
         'Ticket Price Level: Price': 'PriceLevel',
@@ -243,7 +271,7 @@ def load_sales_file(sales_file, yearsOfData, logger):
         'Pre-Discount Total': 'PreDiscountTotal',
         'Unit Discount Amount': 'UnitDiscount',
         'Unit Discount Type': 'UnitDiscountType',
-        'Ticket Order: Email': 'OrderEmail',
+        'Ticket Order: Email': 'Email',
         'Contact: Email': 'ContactEmail',
         # 'Contact: Email' is redundant and deleted
         'Created Date': 'CreatedDate', # This is really the order modified date.
@@ -257,12 +285,10 @@ def load_sales_file(sales_file, yearsOfData, logger):
     sales_df['CreatedDate'] = pd.to_datetime(sales_df['CreatedDate'].copy(), errors='coerce')
 
     # Calculate earliest date to keep and prune earlier rows
-    logger.info(f'Starting sales size: {sales_df.shape}')
     beginning_date = datetime.now() - timedelta(days=365*yearsOfData)
     sales_df = sales_df[sales_df['CreatedDate'] > beginning_date]
-    logger.info(f'Pruned sales size: {sales_df.shape}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Sales loaded. Execution Time: {formatted_timing}')
@@ -299,21 +325,22 @@ Returns:
     pd.DataFrame: The cleaned and preprocessed sales DataFrame, ready for further analysis.
 """
 def sales_initial_prep(df, Account_file, logger):
-    start = timer()
+    start = perf_counter()
     logger.debug(df.shape)
     logger.debug(f'Sales pre-prep columns: {df.columns}')
 
     # Convert date to a simple date format
-    df['EventDate_sales'] = pd.to_datetime(df['EventDate_sales'].copy()).dt.date
+    #df['EventDate_sales'] = pd.to_datetime(df['EventDate_sales'].copy()).dt.date
+    df['EventDate_sales'] = pd.to_datetime(df['EventDate_sales'], format='mixed').dt.date
 
     df = df.copy()
 
     #Remove deleted tickets, as these were placeholders for subscriptions or canceled orders.
     df = df[df['TicketStatus'] != 'Deleted']
 
-    # TODO: These AccountName steps are done at transaction-level
-    #  only because we need an AccountName to generate the ContactId.
-    #  We should get ContactId from saleforce and all of this could be
+    # These AccountName steps are done at transaction-level
+    #  only because we need an AccountName to generate the AccountId.
+    #  We should get AccountId from saleforce and all of this could be
     #  then moved to Patron Detail Processing.
     # set any null AccountNames to walk up
     df['AccountName'] = df['AccountName'].fillna('Walk Up Sales')
@@ -322,19 +349,8 @@ def sales_initial_prep(df, Account_file, logger):
     #null_accountnames = df[df['AccountName'].isnull()]
     #logger.debug(f'List of records missing account names: {null_accountnames}')
 
-    # add ContactId on the assumption that this function generates a unique, repeatable ID.
-    # TODO When the salesforce ContactId problem gets solved, can delete this.
-    df['ContactId'] = df['AccountName'].apply(generate_identifier)
-
-    # Remove redundant columns from Salesforce data file.
-    redundant_columns = [
-        'Ticketable Event: 18 Digit Event ID',
-        'Ticketable Event: 18 Digit Event ID.1',
-        'Ticketable Event: Ticketable Event ID.1',
-        'Status.1',
-        'Contact: Email.1'
-    ]
-    df.drop(redundant_columns, axis=1, inplace=True)
+    # Assign AccountId. Remember ContactId is at contact level.
+    df['AccountId'] = df['AccountName'].apply(generate_identifier)
 
     # Define a dictionary for numeric columns and their fillna values
     numeric_fillna_dict = {
@@ -381,7 +397,7 @@ def sales_initial_prep(df, Account_file, logger):
     logger.debug(df.head)
     logger.debug(df.shape)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Initial sales prep complete. Execution Time: {formatted_timing}')
@@ -425,27 +441,46 @@ Process:
 Returns:
     pd.DataFrame: The processed DataFrame with updated venue names and additional columns for customer attributes ('ChorusMember', 'DuesTxn', 'Student', 'Subscriber').
 """
-def venue_and_attribute_processing(sales_df, chorus_list_file, logger):
-    start = timer()
+def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logger):
+    start = perf_counter()
     logger.debug(f'Sales columns: {sales_df.columns}')
 
     # Clean up venue names
-    sales_df['VenueName_sales'].fillna('None', inplace=True)
+    #sales_df['VenueName_sales'].fillna('None', inplace=True)
+    sales_df['VenueName_sales'] = sales_df['VenueName_sales'].fillna('None')
     sales_df.loc[sales_df['VenueName_sales'].str.contains("Mechanics"), 'VenueName_sales'] = 'Mechanics Hall'
 
     logger.debug(np.unique(sales_df.loc[sales_df['VenueName_sales'].str.contains("Mechanics")]['VenueName_sales']))
     logger.debug(sales_df.dtypes)
 
     # Load the chorus member list and drop missing AccountNames in one step
-    chorus_df = pd.read_csv(chorus_list_file, usecols=['AccountName']).dropna()
+    chorus_df = pd.read_excel(chorus_list_file, usecols=['Account Name']).dropna()
 
     # Create a set of unique AccountNames
-    chorus_members = set(chorus_df['AccountName'])
+    chorus_members = set(chorus_df['Account Name'])
 
     # Add the 'ChorusMember' column to sales_df
     sales_df['ChorusMember'] = sales_df['AccountName'].isin(chorus_members)
 
     logger.debug(f'ChorusMember column added: {sales_df["ChorusMember"].head()}')
+    logger.debug(f'sales_df shape: {sales_df.shape}')
+
+    # Load the chorus member list and drop missing AccountNames in one step
+    board_df = pd.read_csv(board_file).dropna()
+
+    # Parse 'AccountName' into 'FirstName' and 'LastName'
+    if 'AccountName' in board_df.columns:
+        board_df[['FirstName', 'LastName']] = board_df['AccountName'].str.split(pat=' ', n=1, expand=True)
+
+    # Merge the two DataFrames on FirstName and LastName
+    sales_df = sales_df.merge(board_df[['FirstName', 'LastName', 'PatronStatus']],
+                               on=['FirstName', 'LastName'], how='left')
+
+    # Add a new column for the state or 'patron' if not matched
+    sales_df['PatronStatus'] = sales_df['PatronStatus'].fillna('patron')
+
+    # Debug logs
+    logger.debug(f'Board member column added: {sales_df.columns}')
     logger.debug(f'sales_df shape: {sales_df.shape}')
 
     # Now add a field for any Accounts who bought a ticket with a DUES coupon
@@ -458,11 +493,31 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, logger):
     sales_df['Student'] = sales_df['TicketType'].str.contains("Student", na=False)
 
     # Add Subscriber field based on subscription practice.
-    sales_df['Subscriber'] = sales_df['EventName_sales'].str.contains("Subscription", na=False)
 
-    logger.debug(sales_df.head)
+    # Ensure EventName_sales is treated as a string
+    sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
 
-    end = timer()
+# Ensure EventName_sales is a string to avoid errors
+    sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
+
+    # Define the ordered categorical column for correct aggregation
+    sales_df['Subscriber'] = pd.Categorical(
+        sales_df['EventName_sales'].apply(
+            lambda x: (
+                'current' if '2024-2025' in x.lower() or '24-25' in x.lower()
+                else 'previous' if 'subscri' in x.lower()
+                else 'never'
+            )
+        ),
+        categories=['never', 'previous', 'current'],  # Ensures correct order for max()
+        ordered=True
+    )
+
+    logger.debug(f'Subscriber initial totals: {sales_df["Subscriber"].value_counts()}')
+
+    logger.debug(f'Venue and Attribute columns: {sales_df.columns}')
+
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Venue and attribute processing complete. Execution Time: {formatted_timing}')
@@ -477,7 +532,7 @@ Description:
     attended by each account in each genre. The resulting genre counts are merged back into the original DataFrame.
 
 Parameters:
-    df (pd.DataFrame): A DataFrame containing event and account data, including columns such as 'ContactId', 'EventGenre', 'EventId', and 'EventType'.
+    df (pd.DataFrame): A DataFrame containing event and account data, including columns such as 'AccountId', 'EventGenre', 'EventId', and 'EventType'.
     logger (logging.Logger): A logger object for logging debug information and execution time.
 
 Process:
@@ -486,8 +541,8 @@ Process:
         - Filters the DataFrame to include only 'Live' and 'Virtual' events, excluding subscriptions, test events, and other irrelevant event types.
 
     2. **Unique Event Counting**:
-        - Removes duplicate events for each combination of 'ContactId' and 'EventGenre'.
-        - Uses a pivot table to count the number of unique events in each genre for each account ('ContactId').
+        - Removes duplicate events for each combination of 'AccountId' and 'EventGenre'.
+        - Uses a pivot table to count the number of unique events in each genre for each account ('AccountId').
 
     3. **Merging Genre Data**:
         - Merges the original DataFrame with the genre-specific event counts.
@@ -498,20 +553,111 @@ Process:
 Returns:
     pd.DataFrame: The processed DataFrame with additional columns for each genre, representing the count of events attended by each account.
 """
+def event_counts(df, logger, event_column):
+    """
+    Generalized function to count occurrences of a specified event attribute (e.g., EventGenre, EventClass, EventVenue)
+    for each AccountId.
+
+    Parameters:
+        df (DataFrame): The input DataFrame containing event data.
+        logger (Logger): Logger instance for logging messages.
+        event_column (str): The column name to count occurrences of (e.g., 'EventGenre', 'EventClass', 'EventVenue').
+
+    Returns:
+        DataFrame: Original DataFrame merged with event counts for the specified column.
+    """
+    start = perf_counter()
+
+    # Ensure we are not modifying the original DataFrame
+    df = df.copy()
+
+    # Fill NaN values in the specified event column
+    df[event_column] = df[event_column].fillna('None')
+
+    # Filter relevant event types
+    df_filtered = df[df['EventType'].isin(['Live', 'Virtual', 'Subscriptions'])]
+
+    logger.debug(f'Subscriber totals before {event_column} merge: {df["Subscriber"].value_counts()}')
+
+    # Log all unique values of the event column
+    unique_values = df_filtered[event_column].unique()
+    logger.debug(f'Unique values in {event_column}: {list(unique_values)}')
+
+    # Drop duplicates to count only unique events per AccountId for the given event column
+    unique_events_df = df_filtered.drop_duplicates(subset=['AccountId', event_column, 'EventId'])
+
+    # Pivot table to count the number of events per category for each AccountId
+    event_counts_df = unique_events_df.pivot_table(index='AccountId',
+                                                   columns=event_column,
+                                                   values='EventId',
+                                                   aggfunc='count',
+                                                   fill_value=0).reset_index()
+
+    # Merge only the necessary event count columns back to the original DataFrame
+    merged_df = df.merge(event_counts_df, on='AccountId', how='left')
+
+    # Logging details
+    logger.debug(f'Subscriber totals after {event_column} merge: {merged_df["Subscriber"].value_counts()}')
+    logger.debug(f'Final DataFrame shape after {event_column} merge: {merged_df.shape}')
+    logger.debug(f'Final columns after {event_column} merge: {merged_df.columns}')
+
+    # Execution time calculation
+    elapsed_time = timedelta(seconds=perf_counter() - start)
+    logger.info(f'{event_column} counts complete. Execution Time: {elapsed_time.total_seconds():.2f} seconds')
+
+    return merged_df
+"""
 def genre_counts(df, logger):
-    start = timer()
+    start = perf_counter()
+
+    # Create a copy to avoid modifying the original DataFrame
+    df = df.copy()
+
+    # Fill NaN values in 'EventGenre' and filter event types
+    df['EventGenre'] = df['EventGenre'].fillna('None')
+    df_filtered = df[df['EventType'].isin(['Live', 'Virtual', 'Subscriptions'])]
+
+    logger.debug(f'Subscriber totals before genre merge: {df["Subscriber"].value_counts()}')
+
+    # Drop duplicates based on AccountId, EventGenre, and EventId
+    unique_events_df = df_filtered.drop_duplicates(subset=['AccountId', 'EventGenre', 'EventId'])
+
+    # Pivot to count the number of events per genre for each AccountId
+    genre_counts_df = unique_events_df.pivot_table(index='AccountId',
+                                                   columns='EventGenre',
+                                                   values='EventId',
+                                                   aggfunc='count',
+                                                   fill_value=0).reset_index()
+
+    # Merge only necessary genre count columns back to original DataFrame
+    merged_df = df.merge(genre_counts_df, on='AccountId', how='left')
+
+    # Logging details
+    logger.debug(f'Subscriber totals after genre merge: {merged_df["Subscriber"].value_counts()}')
+    logger.debug(f'Final DataFrame shape: {merged_df.shape}')
+    logger.debug(f'Final columns: {merged_df.columns}')
+
+    # Execution time calculation
+    elapsed_time = timedelta(seconds=perf_counter() - start)
+    logger.info(f'Genre counts complete. Execution Time: {elapsed_time.total_seconds():.2f} seconds')
+
+    return merged_df
+def old_genre_counts(df, logger):
+    start = perf_counter()
 
     # Fill NaN values in 'EventGenre' with a placeholder
-    df['EventGenre'].fillna('None', inplace=True)
+    df['EventGenre'] = df['EventGenre'].fillna('None')
 
-    # only consider live or virtual events. Exclude suscriptions, test, etc. from genre counts.
-    df1 = df[df['EventType'].isin(['Live', 'Virtual'])]
+    # only consider live or virtual events. Exclude test, etc. from genre counts.
+    df1 = df[df['EventType'].isin(['Live', 'Virtual','Subscriptions'])]
 
-    # First remove duplicate events for each ContactId and EventGenre
-    unique_events_df = df1.drop_duplicates(subset=['ContactId', 'EventGenre', 'EventId'])
+    logger.debug(f'Subscriber totals before genre merge: {df["Subscriber"].value_counts()}')
 
-    # Calculate the number of events of each genre for each ContactId, using a pivot_table.
-    genre_df = unique_events_df.pivot_table(index='ContactId',
+    # First remove duplicate events for each AccountId and EventGenre
+    unique_events_df = df1.drop_duplicates(subset=['AccountId', 'EventGenre', 'EventId'])
+
+    # Calculate the number of events of each genre for each AccountId, using a pivot_table.
+    genre_df = unique_events_df.pivot_table(index='AccountId',
                                             columns='EventGenre',
                                             values='EventId',  # Assuming 'EventID' is the unique identifier for an event
                                             aggfunc='count',
@@ -521,7 +667,9 @@ def genre_counts(df, logger):
 
     # Merge the original DataFrame with the pivoted genre DataFrame
     logger.debug(f'Genre pre merge: {df.shape}')
-    merged_df = df.merge(genre_df, on='ContactId', how='left')
+    merged_df = df.merge(genre_df, on='AccountId', how='left')
+    logger.debug(f'Subscriber totals after genre merge: {df["Subscriber"].value_counts()}')
+
     logger.debug(f'Genre post merge: {df.shape}')
     logger.debug(f'Sales columns: {df.columns}')
     logger.debug(f'genre columns: {genre_df.columns}')
@@ -529,12 +677,13 @@ def genre_counts(df, logger):
     logger.debug(f'Sales with genre columns: {merged_df.columns}')
     logger.debug(df.head)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'genre counts complete. Execution Time: {formatted_timing}')
 
     return merged_df
+"""
 """
 Function: state_and_city_processing
 
@@ -572,12 +721,12 @@ Returns:
     pd.DataFrame: The processed DataFrame with cleaned and standardized 'State' and 'City' fields.
 """
 def state_and_city_processing(sales_df, logger):
-    start = timer()
+    start = perf_counter()
 
     logger.debug(f'State & City input columns: {sales_df.shape}')
     logger.debug(f'State & City input shape: {sales_df.shape}')
 
-# set aside State and City and clean up
+    # set aside State and City and clean up
     sales_df['State'] = sales_df['State'].astype(str)
     sales_df['State-orig'] = sales_df['State']
     logger.debug(sales_df.State.dtypes)
@@ -626,77 +775,87 @@ def state_and_city_processing(sales_df, logger):
         .str.replace(r"[,.]", " ", regex=True)
         .str.replace(r"\s+", " ", regex=True)
     )
+    logger.debug(f'Begin cleaning up city names')
 
-    # clean up Cities
     # Define a dictionary for state-specific city name corrections
     city_corrections_by_state = {
         "MA": {
-            r'Arlin': 'Arlington',
-            r'Attl': 'Attleboro',
+            r'Arlin.*': 'Arlington',
+            r'Attl.*': 'Attleboro',
             r'Ashkand': 'Ashland',
             r'Aburn': 'Auburn',
-            r'barre': 'Barre',
-            r'lmont': 'Belmont',
+            r'.*barre.*': 'Barre',
+            r'.*lmont': 'Belmont',
             r'Bylston|Boylson|Biylston': 'Boylston',
             r'Baldwinville': 'Baldwinville',
-            r'Charlt': 'Charlton',
-            r'Chelms|Chelmsfp': 'Chelmsford',
+            r'Charlt.*': 'Charlton',
+            r'Chelms.*': 'Chelmsford',
             r'ouglas': 'Douglas',
             r'Fithburg': 'Fitchburg',
-            r'Fisk': 'Fiskdale',
+            r'Fisk.*': 'Fiskdale',
             r'Framingham|Framngham': 'Framingham',
             r'Gardiner': 'Gardner',
-            r'Hold': 'Holden',
-            r'Hopkin': 'Hopkinton',
+            r'Hold.*': 'Holden',
+            r'Hopkin.*': 'Hopkinton',
             r'aster|ancaster': 'Lancaster',
             r'Lanesboro': 'Lanesborough',
             r'East Longmeadow': 'E Longmeadow',
             r'Flirence': 'Florence',
             r'Foxboro': 'Foxborough',
-            r'Hub': 'Hubbardston',
-            r'Jeffer': 'Jefferson',
+            r'Hub.*': 'Hubbardston',
+            r'Jeffer.*': 'Jefferson',
             r'JP': 'Jamaica Plain',
-            r'Leominister': 'Leominster',
+            r'Leomin.*': 'Leominster',
             r'Lunenberg': 'Lunenburg',
             r'Middleboro': 'Middleborough',
-            r'Marlboro|Marboro|Malb': 'Marlborough',
+            r'Marl.*': 'Marlborough',
             r'Natix': 'Natick',
-            r'Newton U': 'Newton Upper Falls',
-            r'Newton H': 'Newton Highlands',
-            r'Northboro|Northbrough|Nothbrough|Norhto|North Borough|01532': 'Northborough',
-            r'Northbr': 'Northbridge',
-            r'Princet': 'Princeton',
+            r'Newton U.*': 'Newton Upper Falls',
+            r'Newton H.*': 'Newton Highlands',
+            r'Northboro.*|01532': 'Northborough',
+            r'Northbr.*': 'Northbridge',
+            r'Princet.*': 'Princeton',
             r'1543|Rutalnd': 'Rutland',
-            r'Sherb': 'Sherborn',
-            r'Southboro|Southbrough': 'Southborough',
-            r'Shrew|sbury': 'Shrewsbury',
-            r'Stowe': 'Stow',
-            r'Sturb': 'Sturbridge',
+            r'Sherb.*': 'Sherborn',
+            r'Southboro.*': 'Southborough',
+            r'Shre.*': 'Shrewsbury',
+            r'Stow.*': 'Stow',
+            r'Sturb.*': 'Sturbridge',
             r'Surtton|Suttom': 'Sutton',
             r'Uuton': 'Upton',
-            r'Westboro|Weestborough|Wesborough|Westtbo|Westboorough|Westobor': 'Westborough',
+            r'^West.*bo.*': 'Westborough',
             r'Westfield': 'Westfield',
-            r'insville': 'Whitinsville',
+            r'.*insville': 'Whitinsville',
             r'^Wor.*': 'Worcester'
         },
         "CT": {
-            r'Haddam': 'E Haddam',
-            r'Grosvenordale': 'N Grosvenordale',
-            r'Pomfret': 'Pomfret',
+            r'Haddam.*': 'E Haddam',
+            r'Grosvenordale.*': 'N Grosvenordale',
+            r'Pomfret.*': 'Pomfret',
             r'Claymont': 'Claymont',
             r'Storrs': 'Storrs'
         },
         "NY": {
-            r'Brokln|Brookj|Broook|Brooklyn': 'Brooklyn',
-            r'Ny': 'New York City'
+            r'Brokln|Brookj|Broook|Brooklyn.*': 'Brooklyn',
+            r'Ny.*': 'New York City'
         }
     }
 
-    # Iterate over the dictionary and apply corrections for each state
+    # Function to correct city names
+    def correct_city(city, corrections):
+        if pd.isna(city):  # Skip if the city is NaN
+            return city
+
+        # Iterate over each pattern and apply the first match
+        for pattern, replacement in corrections.items():
+            if re.search(pattern, city):  # Check if the pattern matches
+                return re.sub(pattern, replacement, city)  # Apply the match
+        return city  # Return original city if no match is found
+
+    # Apply corrections for each state
     for state, corrections in city_corrections_by_state.items():
         mask = sales_df['State'] == state
-        for pattern, replacement in corrections.items():
-            sales_df.loc[mask, 'City'] = sales_df.loc[mask, 'City'].replace(pattern, replacement, regex=True)
+        sales_df.loc[mask, 'City'] = sales_df.loc[mask, 'City'].apply(lambda city: correct_city(city, corrections))
 
 
     # Align NSEW and Centre in City names
@@ -743,7 +902,7 @@ def state_and_city_processing(sales_df, logger):
     logger.debug('MA cities with null state')
     logger.debug(sales_df.shape)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'State and city processing complete. Execution Time: {formatted_timing}')
@@ -780,7 +939,7 @@ Returns:
     pd.DataFrame: The processed DataFrame with cleaned and standardized 'Address' and 'ZIP' fields.
 """
 def address_and_ZIP_processing(sales_df, logger):
-    start = timer()
+    start = perf_counter()
     logger.debug(sales_df.shape)
 
     # Clean up addresses
@@ -817,7 +976,8 @@ def address_and_ZIP_processing(sales_df, logger):
         '0162': '01602', '\(': '01609', '\)': '01602', '10608': '01608',
         '00880': '01609', "0'720": '01720', "02091": '02891',"01250": '01520',
         '91545': '01545', '01555': '01545', "\(016": '01601', '00756': '01545',
-        '00162': '01602', '01533': '01532', '00158': '01581'
+        '00162': '01602', '01533': '01532', '00158': '01581','01594': '01504',
+        '014540': '01545'
     }
 
     def clean_zip_codes(df, zip_column):
@@ -828,7 +988,7 @@ def address_and_ZIP_processing(sales_df, logger):
     # Apply the clean_zip_codes function to the sales_df DataFrame
     sales_df = clean_zip_codes(sales_df, 'ZIP')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'address & ZIP processing complete. Execution Time: {formatted_timing}')
@@ -862,7 +1022,7 @@ Returns:
     pd.DataFrame: The merged DataFrame containing combined sales and event data, sorted by 'EventDate_sales'.
 """
 def combine_sales_and_events(sales_df, event_df, logger):
-    start = timer()
+    start = perf_counter()
 
     logger.debug('Sales + Events:')
 
@@ -894,7 +1054,9 @@ def combine_sales_and_events(sales_df, event_df, logger):
     logger.debug(f'Raw Results:')
     logger.debug(se_df.shape)
 
-    end = timer()
+    logger.debug(f'Subscriber totals after event merge: {se_df["Subscriber"].value_counts()}')
+
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Sales and events merging. Execution Time: {formatted_timing}')
@@ -933,11 +1095,12 @@ Exceptions:
     - Handles any errors by logging debug information during processing.
 """
 def final_processing_and_output(df, output_file, logger, processDonations):
-    start = timer()
+    start = perf_counter()
 
     # Clean up Event Types:
     df['EventType'] = df['EventType'].str.title()
     logger.debug(f'Columns before final aggregation {df.columns}')
+    logger.debug(f'Subscriber totals before final aggregation: {df["Subscriber"].value_counts()}')
 
     # aggregate individual records to the lowest unique set.
     # Assumes each order (Order Number, CreatedDate) can contain = multiple Events and quantities
@@ -947,6 +1110,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
         'OrderNumber',
         'EventName',
         'EventInstance',
+        'Allocation',
         'TicketType',
         'OrderStatus',
         'TicketStatus']
@@ -962,21 +1126,29 @@ def final_processing_and_output(df, output_file, logger, processDonations):
         'Total': 'sum',
         'DiscountTotal': 'sum',
         'PreDiscountTotal': 'sum',
-        'UnitDiscount': 'sum'}
+        'UnitDiscount': 'sum',
+        'Subscriber': 'max',
+        'ChorusMember': 'max',
+        'DuesTxn': 'max',
+        'Student': 'max'}
 
     # and use latest record for any columns using the 'last' aggregation
     df = df.sort_values(by=['CreatedDate'])
-    logger.debug(f'Sales aggregation created')
+    logger.info(f'starting sales aggregation')
+
 
     for col in df.columns:
         # Check if the column is not in the groupby_cols and agg_dict
         if col not in groupby_cols and col not in agg_dict:
-            # If not, add it to the agg_dict using 'first' chronologically
-            agg_dict[col] = 'first'
+            # If not, add it to the agg_dict using 'max'
+            agg_dict[col] = 'last'
 
     # aggregate to the min unique set of records for our purposes.
     df = df.groupby(groupby_cols).agg(agg_dict).reset_index()
-    logger.debug(f'Sales aggregation complete')
+
+    logger.info(f'Sales aggregation complete')
+    logger.debug(f'Subscriber totals after final aggregation: {df["Subscriber"].value_counts()}')
+
     logger.debug(df.shape)
 
     # Now calculate totals
@@ -986,14 +1158,18 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # logger.debug(df[dm_df['EventName_sales'].isna()])
     logger.debug(df.shape)
 
+    # This deals with that Salesforce overcounts donations made as part of a subscription.
     # Create a boolean mask for 'Subscription' in the EventName
-    subscription_mask = df['EventName'].str.contains('Subscription')
+    #subscription_mask = df['EventName'].str.contains('Subscription')
+    #subscription_mask = df['EventName_sales'].str.contains('subscription', case=False)
+    subscription_mask = df['EventName_sales'].fillna('').str.contains('subscription', case=False)
 
     # Get the OrderNumbers with 'Subscription' in the EventName
     subscription_orders = df.loc[subscription_mask, 'OrderNumber'].unique()
 
     # Create a boolean mask for OrderNumber in subscription_orders
-    order_mask = df['OrderNumber'].isin(subscription_orders)
+    #order_mask = df['OrderNumber'].isin(subscription_orders)
+    order_mask = df['OrderNumber'].fillna('').isin(subscription_orders)
 
     # Get the indices of records with OrderNumber in subscription_orders and without 'Subscription' in EventName
     indices_to_zero = df.loc[order_mask & ~subscription_mask].index
@@ -1001,108 +1177,84 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # Set DonationAmount to 0 for those records
     df.loc[indices_to_zero, 'DonationAmount'] = 0
     logger.debug(f'Donation handling complete.')
+    logger.debug(f'raw columns: {df.columns}')
 
-    # TODO Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
-
+    # Need to Calculate discount amounts based on ItemPrice and PriceLevel. Can't trust Salesforce numbers.
     #df['NetTxn'] = df['TicketTotal'] + df['DonationAmount']
 
-    #Strip to final set up columns for transaction file output.
+    # Strip to final set up columns for transaction file output.
     # We're dropping patron attribute information from the transaction file, but keeping them for patron details.
     output_cols = [
-                   'AccountName','ContactId',
-                   #'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'ContactEmail', 'OrderEmail',
+                   'AccountName','AccountId','ContactId',
+                   #'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'ContactEmail', 'Email',
                     'EventName','EventInstance','EventId', 'InstanceId', 'EventDate', 'EventVenue', 'EventCapacity', 'Season',
-                   'PaymentMethod', 'Method', 'Origin', 'CreatedDate', 'EntryDate',
+                   'Method', 'Origin', 'CreatedDate',
                    'OrderNumber', 'TicketStatus', 'OrderStatus', 'Allocation', 'TicketType','OrderSource',
                    'EventStatus', 'EventType', 'EventClass', 'EventGenre', 'EventSubGenre',
-                   'Quantity', 'ItemPrice', 'TicketTotal','PriceLevel', 'AmountPaid', 'DonationName', 'DonationAmount','Total',
+                   'Quantity', 'ItemPrice', 'TicketTotal', 'PriceLevel', 'AmountPaid', 'DonationName', 'DonationAmount',#'Total',
                    'DiscountCode', 'DiscountTotal', 'PreDiscountTotal', 'UnitDiscount', 'UnitDiscountType',
-                   'ChorusMember','DuesTxn','Student','Subscriber',
-                   'Choral','Brass','Classical', 'Contemporary', 'Dance'
-                   ]
+                   'ChorusMember','DuesTxn','Student','Subscriber','PatronStatus',
+                   'Choral','Brass','Classical', 'Contemporary', 'Dance',
+                    'Standard', 'Headliner', 'Bach', 'Mission', 'Local Favorite',
+                    'Mechanics Hall', 'JMAC', 'Trinity Lutheran', 'The Hanover Theatre', 'Prior Center', 'Tuckerman Hall', 'First Unitarian','Curtis Hall', 'First Baptist',
+                    #'Washburn', 'None', 'Curtis Hall', 'First Baptist', 'St Johns', 'Razzo Hall', 'Indian Ranch',  'Wesley United', 'Wamsworks', 'Brooks Hall', 'Shapiro Hall', 'Harvard Unitarian', 'St Paul'
+    ]
 
     # write results to output file for only output columns.
     output_df = df[output_cols]
     logger.debug(f'Sales Output Columns:{output_df.columns}')
 
+    logger.debug(f'Subscriber totals after final processing: {df["Subscriber"].value_counts()}')
+
     output_df.to_csv(output_file, index=False)
     logger.debug(f'full results written.')
 
-    PII_columns = ['AccountName','DonationName']
+    PII_columns = ['AccountName','DonationName','PatronStatus']
     anon_df = output_df.drop(PII_columns, axis=1)
     anon_df.to_csv('anon_' + output_file, index=False)
     logger.debug(f'PII safe Output written. {anon_df.columns}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Final sales results written to file: {output_file}. Execution Time: {formatted_timing}')
 
+    logger.debug(f'final processing return df columns:{df.columns}')
+
     return df # the full data frame is needed for Patron details
-"""
-def region_processing(df, filename, logger):
-    start = timer()
-
-    # add in ZIP-Region Assignments
-    raw_regions_df = pd.read_csv(filename, dtype={'PHYSICAL ZIP': str,'ZIP': str})
-
-    # Extract the first 5 digits of the ZIP code and add leading zeros if necessary
-    raw_regions_df['ZIP'] = raw_regions_df['ZIP'].str[:5].str.zfill(5)
-    raw_regions_df = raw_regions_df[['ZIP','RegionAssignment']].drop_duplicates()
-    #regions_df = raw_regions_df.groupby('ZIP',as_index=False).first()
-    regions_df = raw_regions_df
-    # strip ZIP+4
-    # regions_df['ZIP'] = regions_df['ZIP'].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].str[:5].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].apply(lambda x: '{0:0>5}'.format(x))
-    logger.debug(regions_df)
-    logger.debug(regions_df.shape)
-    logger.debug(regions_df.drop_duplicates().shape)
-
-    # dm_df = dm_df.merge(regions_df, on='ZIP', how='left')
-    logger.debug(f'regions pre merge: {df.shape}')
-
-    dm_df = df.merge(regions_df, on='ZIP', how='left')
-
-    logger.debug(f'regions post merge: {dm_df.shape}')
-    logger.debug(f'Results With regions {dm_df.columns}')
-
-    end = timer()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-
-    return dm_df, formatted_timing
-"""
 
 def add_regions(df, regions_file, logger):
-    start = timer()
+    start = perf_counter()
 
-    # add in ZIP-Region Assignments
-    raw_regions_df = pd.read_csv(regions_file, dtype={'PHYSICAL ZIP': str,'ZIP': str})
+    # Load the regions file with appropriate data types
+    raw_regions_df = pd.read_csv(regions_file, dtype={'PHYSICAL ZIP': str, 'ZIP': str})
 
-    # Extract the first 5 digits of the ZIP code and add leading zeros if necessary
+    # Normalize ZIP codes: take the first 5 digits and pad with leading zeros if necessary
     raw_regions_df['ZIP'] = raw_regions_df['ZIP'].str[:5].str.zfill(5)
-    raw_regions_df = raw_regions_df[['ZIP','RegionAssignment']].drop_duplicates()
 
-    #regions_df = raw_regions_df.groupby('ZIP',as_index=False).first()
-    regions_df = raw_regions_df
-    # strip ZIP+4
-    # regions_df['ZIP'] = regions_df['ZIP'].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].str[:5].astype(str)
-    # regions_df['ZIP'] = regions_df['ZIP'].apply(lambda x: '{0:0>5}'.format(x))
+    # Deduplicate based on ZIP and RegionAssignment to handle inconsistent ZIP-to-region mappings
+    raw_regions_df = raw_regions_df[['ZIP', 'RegionAssignment']].drop_duplicates()
+
+    # Handle potential duplicate ZIP codes by keeping the latest or most consistent assignment
+    regions_df = (
+        raw_regions_df
+        .sort_values(by=['ZIP', 'RegionAssignment'])  # Sort if needed (customize as necessary)
+        .drop_duplicates(subset='ZIP', keep='first')  # Drop duplicates, keeping the first assignment
+    )
 
     logger.debug(regions_df)
     logger.debug(regions_df.shape)
     logger.debug(regions_df.drop_duplicates().shape)
 
-    logger.debug(f'regions pre merge: {df.shape}')
+    logger.debug(f'Regions pre merge: {df.shape}')
 
+    # Merge the regions DataFrame with the original DataFrame on ZIP codes
     dr_df = df.merge(regions_df, on='ZIP', how='left')
 
-    logger.debug(f'regions post merge: {dr_df.shape}')
-    logger.debug(f'Results With regions {dr_df.columns}')
+    logger.debug(f'Regions post merge: {dr_df.shape}')
+    logger.debug(f'Results with regions {dr_df.columns}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Region Processing complete. Execution Time: {formatted_timing}')
@@ -1111,64 +1263,101 @@ def add_regions(df, regions_file, logger):
 
 
 def load_anonymized_dataset(anon_data_file, logger):
-    start = timer()
+    start = perf_counter()
 
     # Load event manifest file and fix column names
     event_df = pd.read_csv(anon_data_file, low_memory=False)
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Anon Dataset loaded. Execution Time: {formatted_timing}')
 
     return event_df
-6
-def add_first_latest_events(df, logger):
-    start = timer()
-    df = df.sort_values(by=['ContactId','EventDate'])
 
-    # Get the first and latest event for each 'ContactId'
-    first_event_df = df.groupby('ContactId')['EventName'].first().rename('FirstEvent')
-    first_event_date = df.groupby('ContactId')['EventDate'].first().rename('FirstEventDate')
-    latest_event_df = df.groupby('ContactId')['EventName'].last().rename('LatestEvent')
-    latest_event_date = df.groupby('ContactId')['EventDate'].last().rename('LatestEventDate')
+def add_key_events(df, logger):
+    from datetime import timedelta
+    from timeit import default_timer as timer
+    import numpy as np
+    import pandas as pd
+
+    start = perf_counter()
+
+    # Log the initial state of the EventDate column
+
+    # Ensure EventDate is a datetime64 type
+    if not pd.api.types.is_datetime64_any_dtype(df['EventDate']):
+        df['EventDate'] = pd.to_datetime(df['EventDate'], errors='coerce')
+
+    # Convert EventDate to date only (remove time component)
+    df['EventDate'] = df['EventDate'].dt.date
+
+    # Only consider actual events, not subscriptions.
+    #todo: gotta fix this!!!!!!
+    df = df[df['EventStatus'].isin(['Complete', 'Future'])]
+
+    # Sort by AccountId and EventDate
+    df = df.sort_values(by=['AccountId', 'EventDate'])
+
+    # Ensure unique events per AccountId and EventDate
+    df = df.drop_duplicates(subset=['AccountId', 'EventDate', 'EventName'])
 
 
-    # For the penultimate event, we work with a grouped object and then apply a custom function to get the penultimate values
-    def get_penultimate(series):
-        if len(series) > 1:
-            return series.iloc[-2]
-        return series.iloc[0]
+    # Helper functions for second and penultimate events
+    def get_second_event(series):
+        return series.iloc[1] if len(series) > 1 else pd.NA
 
-    penultimate_event_df = df.groupby('ContactId')['EventName'].apply(get_penultimate).rename('PenultimateEvent')
-    penultimate_event_date = df.groupby('ContactId')['EventDate'].apply(get_penultimate).rename('PenultimateEventDate')
+    def get_penultimate_event(series):
+        return series.iloc[-2] if len(series) > 1 else pd.NA
 
-    # Concatenate the first and latest event dataframes along the column axis
-    first_latest_events = pd.concat([first_event_df, first_event_date,
-                                     latest_event_df,latest_event_date,
-                                     penultimate_event_df,penultimate_event_date],
-                                    axis=1).reset_index()
-    end = timer()
+    # Group by AccountId and extract key events
+    logger.info("Grouping by AccountId and extracting key events...")
+    first_event_df = df.groupby('AccountId')['EventName'].first().rename('FirstEvent')
+    first_event_date = df.groupby('AccountId')['EventDate'].first().rename('FirstEventDate')
+    second_event_df = df.groupby('AccountId')['EventName'].apply(get_second_event).rename('SecondEvent')
+    second_event_date = df.groupby('AccountId')['EventDate'].apply(get_second_event).rename('SecondEventDate')
+    penultimate_event_df = df.groupby('AccountId')['EventName'].apply(get_penultimate_event).rename('PenultimateEvent')
+    penultimate_event_date = df.groupby('AccountId')['EventDate'].apply(get_penultimate_event).rename('PenultimateEventDate')
+    latest_event_df = df.groupby('AccountId')['EventName'].last().rename('LatestEvent')
+    latest_event_date = df.groupby('AccountId')['EventDate'].last().rename('LatestEventDate')
+
+    # Combine the results into a single DataFrame
+    key_events = pd.concat(
+        [first_event_df, first_event_date,
+         second_event_df, second_event_date,
+         penultimate_event_df, penultimate_event_date,
+         latest_event_df, latest_event_date],
+        axis=1
+    ).reset_index()
+
+    # Log final dataframe sample
+
+    # Log execution time
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'first/last events added: Execution Time: {formatted_timing}')
+    logger.info(f'Key events added: Execution Time: {formatted_timing}')
 
-    return first_latest_events
+    return key_events
+
+
+
 """
 Function: add_bulk_buyers
 
 Description:
-    This function identifies and flags "bulk buyers" and "frequent bulk buyers" based on the number of tickets purchased for events. It adds two new columns, 'BulkBuyer' and 'FrequentBulkBuyer', to the DataFrame, indicating accounts that have made large purchases and accounts that frequently make large purchases across multiple events.
+    This function identifies and flags "bulk buyers" and "frequent bulk buyers" based on the number of tickets purchased for events. 
+    It adds two new columns, 'BulkBuyer' and 'FrequentBulkBuyer', to the DataFrame, indicating accounts that have made large purchases and accounts that frequently make large purchases across multiple events.
 
 Parameters:
-    df (pd.DataFrame): A DataFrame containing event data, including columns like 'ContactId', 'EventName', and 'Quantity'.
+    df (pd.DataFrame): A DataFrame containing event data, including columns like 'AccountId', 'EventName', and 'Quantity'.
     logger (logging.Logger): A logger object for logging debug information and execution time.
 
 Process:
     1. Defines thresholds:
         - `bulk_threshold`: The minimum number of tickets purchased in a single event to qualify as a bulk purchase.
         - `event_count_threshold`: The minimum number of events with bulk purchases required to qualify as a frequent bulk buyer.
-    2. Groups the data by 'ContactId' and 'EventName', summing the quantities of tickets purchased.
+    2. Groups the data by 'AccountId' and 'EventName', summing the quantities of tickets purchased.
     3. Identifies accounts that purchased more than the bulk threshold of tickets for any event.
     4. Adds a 'BulkBuyer' column to flag accounts that made bulk purchases.
     5. Counts the number of events where each account made bulk purchases.
@@ -1181,32 +1370,32 @@ Returns:
         - 'FrequentBulkBuyer': A boolean flag indicating if the account made bulk purchases in more than the specified number of events.
 """
 def add_bulk_buyers(df, logger):
-    start = timer()
+    start = perf_counter()
 
     bulk_threshold = 12
-    event_count_threshold = 3
+    event_count_threshold = 4
 
     # Gather event quantities for all accounts
-    grouped = df.groupby(['ContactId', 'EventName'])['Quantity'].sum().reset_index()
+    grouped = df.groupby(['AccountId', 'EventName'])['Quantity'].sum().reset_index()
 
     # Identify accounts that bought more than the bulk threshold tickets for any event
     bulk_purchases = grouped[grouped['Quantity'] >= bulk_threshold]
 
     # Add a new column for BulkBuyers
-    df['BulkBuyer'] = df['ContactId'].isin(bulk_purchases['ContactId'])
+    df['BulkBuyer'] = df['AccountId'].isin(bulk_purchases['AccountId'])
 
     # Count the number of bulk purchases for each account
-    bulk_purchase_counts = bulk_purchases['ContactId'].value_counts()
+    bulk_purchase_counts = bulk_purchases['AccountId'].value_counts()
 
     # Identify accounts with bulk purchases for more than the event count threshold
     frequent_bulk_buyers = bulk_purchase_counts[bulk_purchase_counts > event_count_threshold].index
 
     # Add a new column for FrequentBulkBuyers
-    df['FrequentBulkBuyer'] = df['ContactId'].isin(frequent_bulk_buyers)
+    df['FrequentBulkBuyer'] = df['AccountId'].isin(frequent_bulk_buyers)
 
     logger.debug(f'Frequent Bulk buyers list: {frequent_bulk_buyers}')
 
-    end = timer()
+    end = perf_counter()
     timing = timedelta(seconds=(end - start))
     formatted_timing = "{:.2f}".format(timing.total_seconds())
     logger.info(f'Bulk Buyers added: Execution Time: {formatted_timing}')
@@ -1224,14 +1413,14 @@ Description:
 
 Parameters:
     df (pd.DataFrame): A DataFrame containing event and transaction data, with columns like 'EventDate', 
-        'ContactId', 'EventName', 'Quantity', and 'ItemPrice'.
+        'AccountId', 'EventName', 'Quantity', and 'ItemPrice'.
     RFMScoreThreshold (int): The threshold above which a patron's RFM score is considered for geolocation updates.
     GetLatLong (bool): A flag indicating whether to update latitude, longitude, and ZIP+4 for missing values.
     regions_file (str): Path to the file containing region mapping data.
-    patron_details_file (str): Path to the file containing existing patron details (latitude, longitude, ZIP+4, etc.).
+    patrons_file (str): Path to the file containing existing patron details (latitude, longitude, ZIP+4, etc.).
     patron_temp_file (str): Path to a temporary file for saving the output in case of file permission issues.
     new_threshold (int): Threshold for identifying new patrons based on their first event date.
-    returning_threshold (int): Threshold for identifying returning patrons based on their event attendance gaps.
+    reengaged_threshold (int): Threshold for identifying returning patrons based on their event attendance gaps.
     logger (logging.Logger): A logger object for logging debug information, execution progress, and results.
 
 Process:
@@ -1250,57 +1439,62 @@ Returns:
     None: The function processes and saves data to the specified files, logging execution details and errors along the way.
 """
 def get_patron_details(df,
+                       rates_df,
                        RFMScoreThreshold,
                        GetLatLong,
                        regions_file,
-                       patron_details_file,
+                       patrons_file,
                        anonymized,
                        new_threshold,
-                       returning_threshold,
+                       reengaged_threshold,
                        logger):
-
-    # Change to working directory
-    #os.chdir(data_dir)
 
     try:
         # Preprocess the data
         logger.debug('Preprocessing patron data...')
 
+        logger.debug(f'Subscriber totals before patron details: {df["Subscriber"].value_counts()}')
+
         df['EventDate'] = pd.to_datetime(df['EventDate'].copy(), errors='coerce')
 
         # only keep Live or Virtual that either completed or are planned. No subscriptions, cancelled, test, etc.
-        df = df[df['EventType'].isin(['Live'])]
-        df = df[df['EventStatus'].isin(['Complete', 'Future'])]
+        df = df[df['EventStatus'].isin(['Complete', 'Future','Subscription'])]
+        #df = df[df['EventType'].isin(['Live','Virtual'])]
         logger.debug(f'initial patron Txn columns: {df.columns}')
 
         # # Set PII columns to Nan. We only do this now so that debugging modeling code doesn't include them.
         if anonymized == True:
             # Note Region is inherited from previous non-anonymized runs.
-            PII_columns = ['AccountName','FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'OrderEmail']
+            PII_columns = ['AccountName','FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'Email']
             # Set the values in the PII columns to NaN where those columns exist in the DataFrame
             for col in PII_columns:
                 if col not in df.columns:
                     df[col] = np.nan
 
         # Define the initial set of columns needed
-        initial_columns = ['AccountName', 'ContactId',
-                            'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'OrderEmail',
+        initial_columns = ['AccountName', 'AccountId','ContactId','EventStatus','EventClass','EventVenue',
+                            'FirstName', 'LastName', 'Address', 'City', 'State', 'ZIP', 'Email',
                             'Quantity', 'ItemPrice', 'CreatedDate', 'EventDate', 'EventName',
-                            'Subscriber', 'ChorusMember', 'DuesTxn', 'Season', 'Student',
-                            'EventGenre', 'Choral', 'Brass', 'Classical', 'Contemporary', 'Dance']
+                            'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn', 'Season', 'Student',
+                            'EventGenre', 'Choral', 'Brass', 'Classical', 'Contemporary', 'Dance',
+                           'Headliner','Local Favorite','Standard','Mission','Bach',
+                           'Mechanics Hall','Tuckerman Hall','JMAC','The Hanover Theatre']
 
         # Select only the relevant columns from the DataFrame
         df = df[initial_columns]
 
-        df = df.sort_values(['ContactId', 'CreatedDate'])
+        df = df.sort_values(['AccountId', 'CreatedDate'])
         df = df.rename(columns={'Season':'LatestSeason'})
+
+        logger.debug(f'Subscriber totals for filtered patron details: {df["Subscriber"].value_counts()}')
 
         logger.debug(f'Patron Txn columns: {df.columns}')
 
-        first_latest_events = add_first_latest_events(df,logger)
+        key_events = add_key_events(df,logger)
         logger.debug(f'first_latest input shape: {df.shape}')
-        df = df.merge(first_latest_events,on='ContactId',how='left')
-        logger.debug(f'first_latest output shape: {df.shape}')
+        df = df.merge(key_events,on='AccountId',how='left')
+        logger.debug(f'key events output shape: {df.shape}')
+        logger.debug(f'key events input columns: {df.shape}')
 
         #logger.debug('Identifying bulk buyers...')
         logger.debug(f'bulk input shape: {df.shape}')
@@ -1308,51 +1502,80 @@ def get_patron_details(df,
         logger.debug(f'bulk output shape: {df.shape}')
         logger.debug(f'bulk output columns: {df.columns}')
 
-        # genre scores require aggregating full history
+        # genre, class and venue scores require aggregating full history
         logger.debug('Calculating genre scores...')
-        genre_df = mod.calculate_genre_scores(df, logger)
-        logger.debug(f'genre shape: {genre_df.shape}')
-        logger.debug(f'genre scores columns: {df.columns}')
+        genre_scores = mod.calculate_event_scores(df, logger, event_column='EventGenre')   # Genre Scores
+        #logger.debug(f'Genre columns: {genre_scores.columns}')
 
-        df = df.merge(genre_df,on='ContactId',how='left')
-        logger.debug(f'Genre columns: {df.columns}')
-        del genre_df
+        logger.debug('Calculating class scores...')
+        class_scores = mod.calculate_event_scores(df, logger, event_column='EventClass')   # Class Scores
+        #logger.debug(f'Genre columns: {class_scores.columns}')
 
-        # Calculate RFM scores
-        logger.info('Calculating RFM scores...')
-        rfm_df = mod.calculate_rfm(df.copy(), 0, logger) #AAYAN
-        logger.debug(f'RFM columns: {rfm_df.columns}')
-        #logger.debug(f'Raw RFM shape: {rfm_df.shape}')
-        logger.debug(f'Raw RFM: {rfm_df.head}')
+        logger.debug('Calculating venue scores...')
+        venue_scores = mod.calculate_event_scores(df, logger, event_column='EventVenue')   # Venue Scores (removes one-offs)
+        #logger.debug(f'Genre columns: {venue_scores.columns}')
+
+        df = df.merge(genre_scores,on='AccountId',how='left')
+        df = df.merge(class_scores,on='AccountId',how='left')
+        df = df.merge(venue_scores,on='AccountId',how='left')
+
+        logger.debug(f'Score columns: {df.columns}')
+        #del genre_df
+        del genre_scores,class_scores,venue_scores
+
+        logger.debug(f'Subscriber passed into Calc: {df["Subscriber"].value_counts()}')
+
+        # Calculate patron metrics
+        logger.info('Calculating Patron metrics...')
+        metrics_df = mod.calculate_patron_metrics(df.copy(), logger)
+        logger.debug(f'Patron metrics columns: {metrics_df.columns}')
+        #logger.debug(f'Raw RFM shape: {metrics_df.shape}')
+        logger.debug(f'Raw Patron Metrics: {metrics_df.head}')
+
+        # add Customer Lifetime Value
+        # Not ready for primetime. Needs to account for dormant patrons.
+        metrics_df = calculate_CLV_score(metrics_df, logger)
+
+    #logger.debug(f'CLV added')
 
         # plots
-        #R = rfm_df['Recency']
-        #F = np.log10(rfm_df['Frequency'] + .01)
-        #M = np.log10(rfm_df['Monetary'] + .01)
-        #plot_3D_scatter(R,'Recency',F,'Log Frequency',M,'Log Monetary')
-        #plot_3D_scatter(rfm_df['RecencyScore'],'Recency Score',rfm_df['FrequencyScore'],'Frequency Score',rfm_df['MonetaryScore'],'Monetary Score')
+        #R = metrics_df['RecencyZ']
+        #LogF = np.log10(metrics_df['Frequency'] + .01)
+        #LogM = np.log10(metrics_df['Monetary'] + .01)
+        #LogG = np.log10(metrics_df['GrowthScore'] + .01)
+
+        #plot_3D_scatter(metrics_df['RecencyZ'],'RecencyZ',metrics_df['FrequencyZ'],'Frequency Z',metrics_df['MonetaryZ'],'Monetary Z',logger)
+        #plot_3D_scatter(metrics_df['Recency'],'Recency',LogF,'Log Frequency',LogG,'Log Growth',logger)
+        #plot_3D_scatter(R,'Recency',F,'log Frequency',M,'log Monetary',logger)
+        #plot_3D_scatter(metrics_df['Recency'],'Recency',metrics_df['Frequency'],'Frequency',metrics_df['GrowthScore'],'Growth',logger)
 
         logger.debug('Calculating patron segments...')
-        rfm_df['Segment'] = rfm_df.apply(mod.assign_segment, args=(new_threshold,returning_threshold), axis=1)
+        metrics_df['Segment'] = metrics_df.apply(mod.assign_segment, args=(new_threshold,reengaged_threshold), axis=1)
 
-        logger.debug(f'final patron model shape: {rfm_df.shape}')
-        logger.debug(f'final patron model columns: {rfm_df.columns}')
-        ##logger.debug(f'Final rfm_df: {rfm_df.head}')
+        logger.debug(f'final patron model shape: {metrics_df.shape}')
+        logger.debug(f'final patron model columns: {metrics_df.columns}')
 
         # Modeling is complete so we can prune transaction columns.
-        # Keep the most recent entry for each 'ContactId'
+        # Keep the most recent entry for each 'AccountId'
         logger.debug('Keeping only most recent Contact transaction address...')
-        # belt and suspenders de-dup
-        last_entry_df = df.drop_duplicates('ContactId', keep='last')
 
-        logger.debug(f'Last Entry columns: {last_entry_df.columns}')
+        # belt and suspenders de-dup
+        df = df.sort_values(by=['CreatedDate'])
+        last_entry_df = df.drop_duplicates('AccountId', keep='last')
+
         logger.debug(f'Last Entry shape: {last_entry_df.shape}')
+        logger.debug(f'Last Entry columns: {last_entry_df.columns}')
 
         #final prep
-        keep_columns = ['AccountName','ContactId','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State', 'ZIP',
-                        #'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
-                        'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BrassScore', 'PreferredGenre','Omni',
-                        'FirstEvent', 'FirstEventDate','LatestEvent','LatestEventDate', 'PenultimateEvent', 'PenultimateEventDate', 'LatestSeason'
+        keep_columns = ['AccountName','AccountId','ContactId','FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
+                        'PatronStatus',#'Subscriber','ChorusMember','DuesTxn','Student','BulkBuyer','FrequentBulkBuyer',
+                        'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BrassScore',
+                        'HeadlinerScore','StandardScore','Local FavoriteScore','BachScore','MissionScore',
+                        'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
+                        'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreStrength','EventGenreEntropy',
+                        'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueStrength','EventVenueEntropy',
+                        'PreferredEventClass','EventClassPreferenceConfidence','EventClassStrength','EventClassEntropy',
+                        'FirstEvent', 'FirstEventDate','SecondEvent', 'SecondEventDate','PenultimateEvent', 'PenultimateEventDate', 'LatestEvent','LatestEventDate', 'LatestSeason'
                         ]
 
         last_entry_df = last_entry_df[keep_columns]
@@ -1360,28 +1583,31 @@ def get_patron_details(df,
         logger.debug('Merging RFM scores with the processed patron data...')
         logger.debug(f'last entry pre-merge shape: {last_entry_df.shape}')
 
-        df = last_entry_df.merge(rfm_df, on='ContactId', how='left').sort_values(by=['MonetaryScore','FrequencyScore','RecencyScore'], ascending=False)
+        df = last_entry_df.merge(metrics_df, on='AccountId', how='left').sort_values(by=['MonetaryScore','FrequencyScore','RecencyScore'], ascending=False)
         logger.debug(f'pre-location shape: {df.shape}')
         logger.debug(f'pre-location columns: {df.columns}')
-        logger.debug(f'pre-location df: {df.head}')
+        logger.debug(f'Subscriber after final merge: {df["Subscriber"].value_counts()}')
+
+
+    # convert Days to Months
+        # List of columns to convert
+        columns_to_convert = ['DaysFromFirstEvent', 'DaysToReturn', 'DaysFromPenultimateEvent']
+
+        # Convert days to months (assuming 30 days in a month) and rename columns
+        for column in columns_to_convert:
+            df[column] = df[column] / 30.4  # Convert to months
+            df.rename(columns={column: column.replace('Days', 'Months')}, inplace=True)
+
+        df['Recency'] = df['Recency']/30.4
+        df.rename(columns={'Recency': 'Recency (Months)'}, inplace=True)
 
         # remove PII for anonymized output
         anon_df = df.copy()
-        PII_columns = ['AccountName','FirstName', 'LastName', 'OrderEmail', 'Address', 'City', 'State']
+        PII_columns = ['AccountName','FirstName', 'LastName', 'Email', 'Address', 'City', 'State']
         anon_df.drop(PII_columns, axis=1, inplace=True)
-        # K-MeansClustering---------------------------------- #Aayan
-        anon_df, wcss = mod.calculate_AUM_and_KMeans(anon_df)
-        mod.KMeans_ElbowPlot(wcss)
-        mod.analyze_silhouette_scores(anon_df, max_clusters=10)
-        mod.snake_plot_rfm(anon_df, k_values=[4, 5, 6])
-        mod.KMeans_RFMPlot(anon_df)
-        # AgglomerativeClustering---------------------------------
-        anon_df = mod.calculate_AUM_and_Agglomerative(anon_df)
-        mod.analyze_silhouette_scores_agglomerative(anon_df, max_clusters=10)
-        mod.Agglomerative_RFMPlot(anon_df)
         logger.debug(f'Anon Patron columns: {anon_df.columns}')
         logger.debug(f'Anon Patron shape: {anon_df.shape}')
-        anon_output_file = 'anon_' + patron_details_file
+        anon_output_file = 'anon_' + patrons_file
         anon_df.to_csv(anon_output_file, index=False)
         logger.info(f'Anon Patron results written to file: {anon_output_file}')
 
@@ -1405,62 +1631,159 @@ def get_patron_details(df,
 
             logger.debug('Add existing lat, long and ZIP+4 to the dataframe...')
             # first open the original file to see which lat/long details exist, so we don't re-generate them.
-            orig_df = pd.read_csv(patron_details_file,low_memory=False)
+            orig_df = pd.read_csv(patrons_file,low_memory=False)
 
             logger.debug(f'original: {orig_df.shape}')
             logger.debug(f'original: {orig_df.columns}')
             logger.debug(f'original: {orig_df.head}')
 
-            # keep only most recent ContactId instance.
-            orig_df = orig_df.sort_values(['ContactId','RFMScore'])
-            orig_df = orig_df.groupby('ContactId').first().reset_index()
+            # keep only the most recent AccountName instance.
+            # Note: using names as ContactId has changed, but AccountName is constant.
+            orig_df = orig_df.sort_values(['AccountName','Recency (Months)'])
+            orig_df = orig_df.groupby('AccountName').first().reset_index()
 
             # only run if the ZIP+4 format is wrong.
             #orig_df['ZIP+4'] = np.nan
 
             # Update existing lat, long and ZIP+4 from the previous run.
-            df = df.merge(orig_df[['ContactId','Latitude','Longitude','ZIP+4']],on='ContactId', how='left').drop_duplicates()
+            df = df.merge(orig_df[['AccountName','Latitude','Longitude','ZIP+4']],on='AccountName', how='left').drop_duplicates()
 
             # Get the list of accounts missing lat/long that meet the RFM threshold criteria
-            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) & (df['RFMScore'] > RFMScoreThreshold)][['ContactId','Address','City','State','ZIP']]
+            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) & (df['RFMScore'] > RFMScoreThreshold)][['AccountName','Address','City','State','ZIP']]
             logger.debug(f'list with missing lat/long : {list_df}')
 
-            count_missing_before = list_df['ContactId'].nunique()
+            count_missing_before = list_df['AccountName'].nunique()
             logger.debug(f'Patrons with missing Lat/Long before: {count_missing_before}')
 
             if GetLatLong:
                 logger.info('Getting any new Lat/Long data...')
-                start = timer()
-                # this will only update ContactId's if lat and long are missing.
+                start = perf_counter()
+                # this will only update AccountId's if lat and long are missing.
                 df = df.apply(update_geocode_info, args=(RFMScoreThreshold,logger), axis=1)
 
                 # We're not using ZIP+4, so bypass this.
                 #logger.info('Get ZIP+4...')
                 #df = df.apply(update_zip_plus4_info, args=(RFMScoreThreshold,), axis=1)
 
-                end = timer()
+                end = perf_counter()
                 timing = timedelta(seconds=(end - start))
                 formatted_timing = "{:.2f}".format(timing.total_seconds())
 
             else:
                 logger.info('Bypassing Lat/Long and ZIP+4...')
 
-            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) & (df['RFMScore'] > RFMScoreThreshold)][['ContactId']]
-            count_missing_after = list_df['ContactId'].nunique()
+            list_df = df[(df['Latitude'].isna() | df['Longitude'].isna()) &
+                         (df['RFMScore'] > RFMScoreThreshold)][['AccountName', 'Address', 'City', 'State', 'ZIP', 'RFMScore','Recency (Months)']]
+            count_missing_after = list_df['AccountName'].nunique()
             new_counts = count_missing_before - count_missing_after
+            list_df.to_csv('bad_addresses.csv', index=False)
 
             logger.info(f'{count_missing_after} contacts are missing Lat/Long, likely to bad addresses')
             logger.info(f'{new_counts} new contacts had Lat/Long added.')
 
-            logger.debug(f'Full non-anon shape: {df.shape}')
-            logger.debug(f'Full non-anon columns: {df.columns}')
-            logger.debug(f'The full non-anonymized df: {df.head}')
+            # arranging columns
+            output_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason', 'RegionAssignment',
+                           'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
+                           'RecencyScore', 'FrequencyScore', 'MonetaryScore','CLV_Score',
+                           'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreStrength','EventGenreEntropy',
+                           'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueStrength','EventVenueEntropy',
+                           'PreferredEventClass','EventClassPreferenceConfidence','EventClassStrength','EventClassEntropy',
+                           'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BrassScore',
+                           'HeadlinerScore','StandardScore','Local FavoriteScore','MissionScore','BachScore',
+                           'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
+                           'PatronStatus','Subscriber', 'ChorusMember', 'DuesTxn',
+                           'FrequentBulkBuyer', 'Student',
+                           'MonthsFromFirstEvent','MonthsToReturn', 'RecentEventYearsGap',
+                           'FirstEvent', 'FirstEventDate', 'SecondEvent',
+                           'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate',
+                           'LatestEvent', 'LatestEventDate',
+                           'FirstName', 'LastName', 'Email', 'Address', 'City', 'State', 'ZIP',
+                            'Latitude', 'Longitude', 'ZIP+4','AccountId']
+
+            full_output_df = df[output_cols]
+
+            logger.debug(f'Full non-anon shape: {full_output_df.shape}')
+            logger.debug(f'Full non-anon columns: {full_output_df.columns}')
+            logger.debug(f'The full non-anonymized df: {full_output_df.head}')
 
             # Save the full non-anonymized results
             logger.debug('Saving the full non-anon results...')
-            df.to_csv(patron_details_file, index=False)
+            full_output_df.to_csv(patrons_file, index=False)
 
-            logger.info(f'Full Patron results written to file: {patron_details_file}')
+            logger.info(f'Full Patron results written to file: {patrons_file}')
+
+            # For a summary file, select key attributes and give them readable names.
+            summary_rename_map = {
+                'AccountName': 'Account Name',
+                'ContactId': 'Contact ID',
+                'Segment': 'Customer Segment',
+                'RFMScore': 'RFM Score',
+                'Lifespan': 'Customer Lifespan',
+                'LatestSeason': 'Most Recent Season',
+                'RegionAssignment': 'Geo Region',
+                'Recency (Months)': 'Recency (Months)',
+                'Frequency': 'Frequency',
+                'AYM': 'Average Yearly Monetary',
+                'GrowthScore': 'Growth Score',
+                'Regularity': 'Regularity',
+                'Monetary': 'Total Monetary',
+                'RecencyScore': 'Recency Score',
+                'FrequencyScore': 'Frequency Score',
+                'MonetaryScore': 'Monetary Score',
+                'PreferredEventGenre': 'Favorite Genre',
+                #'EventGenrePreferenceConfidence': 'Genre Preference Confidence',
+                #'EventGenreEntropy': 'Genre Entropy',
+                'EventGenreStrength': 'Genre Strength',
+                'PreferredEventVenue': 'Favorite Venue',
+                #'EventVenuePreferenceConfidence': 'Venue Preference Confidence',
+                #'EventVenueEntropy': 'Venue Entropy',
+                'EventVenueStrength': 'Venue Strength',
+                'PreferredEventClass': 'Favorite Class',
+                #'EventClassPreferenceConfidence': 'Class Preference Confidence',
+                #'EventClassEntropy': 'Class Entropy',
+                'EventClassStrength': 'Class Strength',
+                'PatronStatus': 'Patron Status',
+                'Subscriber': 'Is Subscriber',
+                'ChorusMember': 'In Chorus',
+                'DuesTxn': 'Dues Txn',
+                'FrequentBulkBuyer': 'Frequent Bulk Buyer',
+                'Student': 'Is Student',
+                'MonthsFromFirstEvent': 'Months Since First Event',
+                'MonthsToReturn': 'Months to Return',
+                'RecentEventYearsGap': 'Recent Event Gap (Years)',
+                'FirstEvent': 'First Event',
+                'FirstEventDate': 'First Event Date',
+                'SecondEvent': 'Second Event',
+                'SecondEventDate': 'Second Event Date',
+                'PenultimateEvent': 'Second-to-Last Event',
+                'PenultimateEventDate': 'Second-to-Last Event Date',
+                'LatestEvent': 'Most Recent Event',
+                'LatestEventDate': 'Most Recent Event Date',
+                'FirstName': 'First Name',
+                'LastName': 'Last Name',
+                'Email': 'Email Address',
+                'Address': 'Address',
+                'City': 'City',
+                'State': 'State',
+                'ZIP': 'ZIP Code',
+                'Latitude': 'Latitude',
+                'Longitude': 'Longitude',
+                'AccountId': 'Account ID'
+            }
+            # Create summary DataFrame with renaming in one step
+            summary_df = df[list(summary_rename_map.keys())].rename(columns=summary_rename_map)
+
+            # Save the summary DataFrame
+            #summary_output_file = 'summary_' + patrons_file
+            #summary_df.to_excel(summary_output_file, index=False)
+
+            # Define the output file name
+            summary_output_file = 'summary_' + patrons_file.replace('.csv', '.xlsx')  # Ensure the file has .xlsx extension
+            # Write to Excel (without index column)
+            summary_df.to_excel(summary_output_file, index=False)
+
+
+            return df
 
     except PermissionError:
         print(f'The output file is already open.')
@@ -1469,7 +1792,6 @@ def get_patron_details(df,
     except Exception as e:
         # This will catch any other exceptions
         print(f"An unexpected error occurred: {e}")
-
 
 # General functions
 def safe_divide(x, y):
@@ -1495,6 +1817,7 @@ Process:
 Returns:
     str: A unique SHA-256 hash string for the provided account name.
 """
+
 def generate_identifier(account_name):
     # Use SHA-256 hash function
     return hashlib.sha256(account_name.encode()).hexdigest()
@@ -1548,7 +1871,6 @@ Returns:
 """
 def get_geocode_info(address):
 
-
     google_api_key = 'AIzaSyAC4jkZD-p7bkor1InDTyw2Q2ULXK23yLw'
     base_url = 'https://maps.googleapis.com/maps/api/geocode/json'
     params = {'address': address, 'key': google_api_key}
@@ -1600,7 +1922,7 @@ def update_geocode_info(df, RFMScoreThreshold, logger):
             # Call get_geocode_info() and update latitude and longitude
             geocode_info = get_geocode_info(f"{df['Address']}, {df['City']}, {df['State']}, {df['ZIP']}")
             if geocode_info is not None:
-                #start = timer()
+                #start = perf_counter()
                 df['Latitude'] = geocode_info['lat']
                 df['Longitude'] = geocode_info['lng']
 
@@ -1632,4 +1954,236 @@ def update_zip_plus4_info(df, RFMScoreThreshold):
         if zip_plus4 is not None:
             df['ZIP+4'] = df['ZIP'] + '-' + zip_plus4
     return df
-#%%
+
+import pandas as pd
+
+import pandas as pd
+
+def calculate_retention_and_churn(df, logger=None):
+    """
+    Calculate Year-over-Year (YoY) and 3-Year cumulative retention and churn rates for patrons.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Input DataFrame with at least the following columns:
+        - 'AccountId': Unique identifier for each patron
+        - 'EventDate': Date of the patron's activity or attendance
+
+    logger : logging.Logger, optional
+        Logger instance for status logging.
+
+    Returns:
+    --------
+    pd.DataFrame
+        A DataFrame indexed by FiscalYear, containing:
+        - Total Patrons Previous Year
+        - New Patrons Previous Year
+        - Retained New Patrons
+        - Retained All Patrons
+        - Churned Existing Patrons
+        - New Patron Retention & Churn Rates
+        - 1-Year (YoY) Retention & Churn Rates
+        - 3-Year Retention & Churn Rates (excluding recent joiners)
+    """
+
+    # Convert to datetime and assign fiscal year
+    df['EventDate'] = pd.to_datetime(df['EventDate'])
+    df['FiscalYear'] = df['EventDate'].dt.year + (df['EventDate'].dt.month >= 7)
+    df['FirstFiscalYear'] = df.groupby('AccountId')['FiscalYear'].transform('min')
+
+    retention_data = []
+    fiscal_years = sorted(df['FiscalYear'].unique())
+
+    for i in range(1, len(fiscal_years)):
+        current_year = fiscal_years[i]
+        prev_year = fiscal_years[i - 1]
+
+        #if logger:
+        #    logger.info(f"Calculating retention for fiscal year {current_year}")
+
+        # Slice patrons
+        patrons_prev = df[df['FiscalYear'] == prev_year]['AccountId'].unique()
+        new_prev = df[df['FirstFiscalYear'] == prev_year]['AccountId'].unique()
+
+        # New Patron Retention
+        retained_new = df[(df['AccountId'].isin(new_prev)) &
+                          (df['FiscalYear'] == current_year)]['AccountId'].nunique()
+        new_retention_rate = retained_new / len(new_prev) if len(new_prev) > 0 else None
+        new_churn_rate = 1 - new_retention_rate if new_retention_rate is not None else None
+
+        # Overall YoY Retention
+        retained_all = df[(df['AccountId'].isin(patrons_prev)) &
+                          (df['FiscalYear'] == current_year)]['AccountId'].nunique()
+        overall_retention_rate = retained_all / len(patrons_prev) if len(patrons_prev) > 0 else None
+        overall_churn_rate = 1 - overall_retention_rate if overall_retention_rate is not None else None
+
+        # Existing Patron Churn (those not new last year)
+        existing_prev = list(set(patrons_prev) - set(new_prev))
+        retained_existing = df[(df['AccountId'].isin(existing_prev)) &
+                               (df['FiscalYear'] == current_year)]['AccountId'].nunique()
+        churned_existing = len(existing_prev) - retained_existing
+        churn_rate_existing = churned_existing / len(existing_prev) if len(existing_prev) > 0 else None
+
+        # 3-Year Retention
+        if i >= 3:
+            # Exclude recent joiners: only include patrons with FirstFiscalYear <= current_year - 2
+            eligible_3y_patrons = df[df['FirstFiscalYear'] <= current_year - 2]['AccountId'].unique()
+            recent_years = [current_year - 2, current_year - 1, current_year]
+
+            patrons_3y = set(df[(df['AccountId'].isin(eligible_3y_patrons)) &
+                                (df['FiscalYear'].isin(recent_years))]['AccountId'])
+
+            retained_3y = set(df[(df['AccountId'].isin(patrons_3y)) &
+                                 (df['FiscalYear'] == current_year)]['AccountId'])
+
+            retained_count = len(retained_3y)
+            total_3y = len(patrons_3y)
+            retention_3y = retained_count / total_3y if total_3y > 0 else None
+            churn_3y = 1 - retention_3y if retention_3y is not None else None
+        else:
+            total_3y = None
+            retained_count = None
+            retention_3y = None
+            churn_3y = None
+
+        # Append results
+        retention_data.append({
+            'FiscalYear': current_year,
+            'Total Patrons Previous Year': len(patrons_prev),
+            'New Patrons Previous Year': len(new_prev),
+            'Retained New Patrons': retained_new,
+            'New Patron Retention Rate': new_retention_rate,
+            'New Patron Churn Rate': new_churn_rate,
+            'Retained All Patrons': retained_all,
+            '1-Year Retention Rate': overall_retention_rate,
+            '1-Year Churn Rate': overall_churn_rate,
+            'Churned Existing Patrons': churned_existing,
+            'Existing Patron Churn Rate': churn_rate_existing,
+            'Three Year Patrons': total_3y,
+            'Three Year Retained Patrons': retained_count,
+            '3-Year Retention Rate': retention_3y,
+            '3-Year Churn Rate': churn_3y
+        })
+
+    return pd.DataFrame(retention_data).set_index('FiscalYear')
+def old_calculate_retention_and_churn(df, logger):
+    # Ensure EventDate is datetime
+    df['EventDate'] = pd.to_datetime(df['EventDate'])
+
+    # Extract the fiscal year (July 1 to June 30)
+    df['FiscalYear'] = df['EventDate'].dt.year + (df['EventDate'].dt.month >= 7)
+
+    # Identify the first event fiscal year for each patron (new patrons)
+    df['FirstFiscalYear'] = df.groupby('AccountId')['FiscalYear'].transform('min')
+
+    retention_data = []
+
+    # Get a list of unique fiscal years for the analysis
+    fiscal_years = sorted(df['FiscalYear'].unique())
+
+    # Iterate through each fiscal year starting from the second one (no retention for the first fiscal year)
+    for i in range(1, len(fiscal_years)):
+        current_fiscal_year = fiscal_years[i]
+        previous_fiscal_year = fiscal_years[i - 1]
+
+        # Get all patrons who were active in the previous fiscal year
+        patrons_previous_year = df[df['FiscalYear'] == previous_fiscal_year]['AccountId'].unique()
+
+        # Get new patrons from the previous fiscal year (those whose first attendance was in the previous year)
+        new_patrons_previous_year = df[df['FirstFiscalYear'] == previous_fiscal_year]['AccountId'].unique()
+
+        # Get all patrons who are active in the current fiscal year
+        patrons_current_year = df[df['FiscalYear'] == current_fiscal_year]['AccountId'].unique()
+
+        # New Patron Retention Calculation (new patrons from last year who returned this year)
+        retained_new_patrons = df[(df['AccountId'].isin(new_patrons_previous_year)) & (df['FiscalYear'] == current_fiscal_year)]['AccountId'].nunique()
+        new_patron_retention_rate = retained_new_patrons / len(new_patrons_previous_year) if len(new_patrons_previous_year) > 0 else None
+
+        # Overall Retention Calculation (all patrons from last year who returned this year)
+        retained_all_patrons = df[(df['AccountId'].isin(patrons_previous_year)) & (df['FiscalYear'] == current_fiscal_year)]['AccountId'].nunique()
+        overall_retention_rate = retained_all_patrons / len(patrons_previous_year) if len(patrons_previous_year) > 0 else None
+
+        # Churn Calculation (existing patrons from last year who did not return this year)
+        existing_patrons_previous_year = list(set(patrons_previous_year) - set(new_patrons_previous_year))
+        churned_existing_patrons = len(existing_patrons_previous_year) - df[(df['AccountId'].isin(existing_patrons_previous_year)) & (df['FiscalYear'] == current_fiscal_year)]['AccountId'].nunique()
+        churn_rate = churned_existing_patrons / len(existing_patrons_previous_year) if len(existing_patrons_previous_year) > 0 else None
+
+        # 3-Year Cumulative Retention Calculation
+        three_years_patrons = set()  # Initialize the variable outside the if block
+        if i >= 3:  # Ensure we have at least 3 years of data to calculate this
+            three_years_patrons = set(df[df['FiscalYear'].isin([current_fiscal_year - 2, current_fiscal_year - 1, current_fiscal_year])]['AccountId'])
+            retained_three_years_patrons = set(df[(df['AccountId'].isin(three_years_patrons)) & (df['FiscalYear'] == current_fiscal_year)]['AccountId'])
+            cumulative_retention_rate = len(retained_three_years_patrons) / len(three_years_patrons) if len(three_years_patrons) > 0 else None
+            retained_3Y_patrons_count = len(retained_three_years_patrons)  # 3-Year Retained patrons
+            churned_3y_patrons_count = len(three_years_patrons) - retained_3Y_patrons_count  # 3-Year Churned patrons
+            three_year_churn_rate = churned_3y_patrons_count / len(three_years_patrons) if len(three_years_patrons) > 0 else None
+        else:
+            cumulative_retention_rate = None  # Not enough data for 3 years
+            retained_3Y_patrons_count = None
+            three_year_churn_rate = None
+
+        # Store all metrics and calculated values in a dict for each fiscal year
+        retention_data.append({
+            'FiscalYear': current_fiscal_year,
+            'Total Patrons Previous Year': len(patrons_previous_year),
+            'New Patrons Previous Year': len(new_patrons_previous_year),
+            'Retained New Patrons': retained_new_patrons,
+            'Retained All Patrons': retained_all_patrons,
+            'Three Year Patrons': len(three_years_patrons),
+            'Three YearRetained Patrons': retained_3Y_patrons_count,
+            'Churned Existing Patrons': churned_existing_patrons,
+            'New Patron Retention Rate': new_patron_retention_rate if new_patron_retention_rate is not None else None,
+            'YoY Retention Rate': overall_retention_rate if overall_retention_rate is not None else None,
+            'Three Year Cumulative Retention Rate': cumulative_retention_rate,
+            'YoY Churn Rate': churn_rate if churn_rate is not None else None,
+            'Three Year Churn Rate': three_year_churn_rate
+        })
+
+    # Convert to DataFrame for better display with fiscal year as index
+    retention_df = pd.DataFrame(retention_data)
+
+    # Return the retention and churn data for each fiscal year
+    return retention_df.set_index('FiscalYear')
+
+
+
+# Here is the corrected version of the provided function:
+
+def calculate_CLV_score(df, logger):
+    """
+    This function calculates CLV scores and ranks based on Recency, Frequency, and Monetary scores.
+
+    Parameters:
+    df (pandas.DataFrame): The DataFrame containing Recency, Frequency, and Monetary columns.
+    churn_rates_df (pandas.DataFrame): (Placeholder) The DataFrame containing churn rates (not used in this implementation).
+    logger (logging.Logger): Logger object for logging information.
+
+    Returns:
+    pandas.DataFrame: The DataFrame with calculated CLV scores and ranks.
+    """
+    # Define the weights for Recency, Frequency, and Monetary
+    weights = {'Recency': 0.2, 'Frequency': 0.3, 'Monetary': 0.5}
+
+    # Calculate CLV Score based on the weighted average
+    df['CLV_Score'] = (weights['Recency'] * df['RecencyScore'] +
+                       weights['Frequency'] * df['FrequencyScore'] +
+                       weights['Monetary'] * df['MonetaryScore'])
+
+    """
+    # Assign CLV rank based on the score thresholds
+    df['CLV_Rank'] = np.select(
+        [
+            df['CLV_Score'] >= 4.5,
+            df['CLV_Score'] >= 3.5,
+            df['CLV_Score'] >= 2.5,
+            df['CLV_Score'] >= 1.5,
+            df['CLV_Score'] < 1.5
+        ],
+        [5,4,3,2,1]
+    )
+    """
+    logger.info(f"CLV score calculation complete")
+    return df
+
+# This corrected version includes fixes such as properly closing the 'df['RecencyScore']' bracket and removing the duplicate 'return df' statement.
