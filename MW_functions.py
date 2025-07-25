@@ -55,7 +55,8 @@ def load_event_manifest(manifest_file, logger):
     start = perf_counter()
 
     # Load event manifest file and fix column names
-    event_df = pd.read_excel(manifest_file)
+    event_df = pd.read_excel(manifest_file, sheet_name='EventManifest')
+    logger.debug(f'Raw Event Manifest {event_df.head()}')
 
     # Fix dates
     event_df['EventDate'] = pd.to_datetime(event_df['EventDate'].copy()).dt.date
@@ -132,6 +133,8 @@ def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
 
     # Merge dataframes
     logger.debug(f'PnL pre merge: {PnL_df.shape}')
+    logger.debug(f'PnL columns {PnL_df.columns}')
+    logger.debug(f'event_df columns{event_df.columns}')
     res_df = event_df.merge(PnL_df, how='left', on='EventId').sort_values('EventDate', ascending=False)
     logger.debug(f'PnL post merge: {PnL_df.shape}')
 
