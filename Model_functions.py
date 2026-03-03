@@ -188,7 +188,7 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
         pass
 
     return event_df
-def calculate_event_scores(df, logger, event_column, venue_threshold=6):
+def old_calculate_event_scores(df, logger, event_column, venue_threshold=6):
     """
     Generalized function to calculate scores for EventGenre, EventClass, or EventVenue.
 

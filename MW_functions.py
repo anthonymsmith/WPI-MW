@@ -500,11 +500,18 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
 # Ensure EventName_sales is a string to avoid errors
     sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
 
+    # Calculate the current season dynamically (season starts in July)
+    _today = datetime.today()
+    _season_start = _today.year if _today.month > 6 else _today.year - 1
+    _season_end = _season_start + 1
+    _season_long = f'{_season_start}-{_season_end}'                          # e.g. '2025-2026'
+    _season_short = f'{str(_season_start)[-2:]}-{str(_season_end)[-2:]}'    # e.g. '25-26'
+
     # Define the ordered categorical column for correct aggregation
     sales_df['Subscriber'] = pd.Categorical(
         sales_df['EventName_sales'].apply(
             lambda x: (
-                'current' if '2024-2025' in x.lower() or '24-25' in x.lower()
+                'current' if _season_long in x.lower() or _season_short in x.lower()
                 else 'previous' if 'subscri' in x.lower()
                 else 'never'
             )
