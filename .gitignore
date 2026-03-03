@@ -1,0 +1,28 @@
+# Data files
+*.csv
+*.xlsx
+*.xls
+*.xlsm
+*.pdf
+*.pptx
+*.docx
+*.hyper
+*.twb
+*.log
+*.png
+
+# Temp / OS
+~$*
+.DS_Store
+
+# Python
+__pycache__/
+.venv/
+*.pyc
+
+# IDE
+.idea/
+
+# Data directories
+archive/
+budget/

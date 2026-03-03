@@ -36,6 +36,158 @@ def load_anonymized_dataset(anon_data_file, logger):
 
     return event_df
 
+def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_days=4):
+    """
+    Generalized function to calculate scores for EventGenre, EventClass, or EventVenue,
+    with a 4-day burst collapse to reduce festival weekend bias (per Account x Category).
+    """
+    from time import perf_counter
+    import numpy as np
+    import pandas as pd
+    from scipy.stats import entropy
+
+    start = perf_counter()
+    df = df.copy()
+
+    # Hygiene
+    df[event_column] = df[event_column].fillna('None')
+    df = df[df[event_column] != "None"]
+    df['EventDate'] = pd.to_datetime(df['EventDate'])
+
+    # Handle venue filtering
+    if event_column == 'EventVenue':
+        venue_counts = df[event_column].value_counts()
+        valid_venues = venue_counts[venue_counts >= venue_threshold].index
+        df = df[df[event_column].isin(valid_venues)]
+
+    # -------- 4-day burst collapse (per AccountId x Category) --------
+    def _collapse_group(g, window_days):
+        g = g.sort_values('EventDate')
+        dates = g['EventDate'].to_numpy()
+        keep = np.ones(len(g), dtype=bool)
+        last_kept_idx = 0
+        for i in range(1, len(g)):
+            dt_days = (dates[i] - dates[last_kept_idx]) / np.timedelta64(1, 'D')
+            if dt_days < window_days:
+                keep[i] = False
+            else:
+                last_kept_idx = i
+        return g.loc[keep]
+
+    df = (
+        df.groupby(['AccountId', event_column], group_keys=False)
+        .apply(lambda g: _collapse_group(g, burst_days))
+        .reset_index(drop=True)
+    )
+
+    # Unique events after burst collapse
+    unique_events_df = df.drop_duplicates(subset=['AccountId', 'EventDate', event_column])
+
+    # Global frequencies (post-burst)
+    global_event_freq = unique_events_df[event_column].value_counts(normalize=True)
+
+    # Counts per account
+    event_counts = (
+        unique_events_df.groupby(['AccountId', event_column])
+        .size()
+        .reset_index(name='Count')
+    )
+    event_counts['NormalizedCount'] = event_counts['Count'] / (
+            1 + event_counts[event_column].map(global_event_freq)
+    )
+
+    # Normalize within account
+    total_counts = (
+        event_counts.groupby('AccountId')['NormalizedCount']
+        .sum()
+        .reset_index(name='TotalNormalized')
+    )
+    event_counts = event_counts.merge(total_counts, on='AccountId')
+    event_counts['NormalizedPercentage'] = np.where(
+        event_counts['TotalNormalized'] > 0,
+        event_counts['NormalizedCount'] / event_counts['TotalNormalized'],
+        0.0
+    )
+
+    # Wide pivot
+    event_df = (
+        event_counts.pivot(index='AccountId', columns=event_column, values='NormalizedPercentage')
+        .fillna(0)
+        .reset_index()
+    )
+
+    # Frequency = distinct EventName per account (post-burst)
+    freq_series = unique_events_df.groupby('AccountId')['EventName'].nunique()
+    event_df['Frequency'] = event_df['AccountId'].map(freq_series).fillna(0).astype(int)
+
+    # Entropy
+    def calculate_entropy(row):
+        proportions = row[row > 0]
+        return entropy(proportions) if len(proportions) else 0.0
+
+    event_df['Entropy'] = event_df.drop(columns=['AccountId', 'Frequency']).apply(calculate_entropy, axis=1)
+
+    # Preference strength
+    event_df['RawPreferenceStrength'] = 1 / (0.8 + event_df['Entropy'])
+
+    # Preferred category
+    preferred_col = f'Preferred{event_column}'
+    event_df[preferred_col] = (
+        event_df.drop(columns=['AccountId', 'Entropy', 'RawPreferenceStrength', 'Frequency']).idxmax(axis=1)
+    )
+
+    # ✅ FIXED: add suffix with proper comprehension
+    event_df.columns = [
+        (col + 'Score' if col not in ['AccountId', preferred_col, 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col)
+        for col in event_df.columns
+    ]
+
+    # Event count weighting
+    max_events = event_df['Frequency'].max() if len(event_df) else 0
+    event_df['EventCountWeighting'] = (
+        np.log1p(1 + event_df['Frequency']) / np.log1p(1 + max_events) if max_events > 0 else 0.0
+    )
+
+    # Reduce preference for low counts
+    event_df.loc[event_df['Frequency'] <= 3, 'RawPreferenceStrength'] *= 0.5
+
+    # Confidence
+    alpha = 0.4
+    event_df['PreferenceConfidence'] = np.clip(
+        ((1 - alpha) * event_df['RawPreferenceStrength'] + alpha * event_df['EventCountWeighting']) * 100,
+        0, 100
+    )
+
+    # Strength label
+    entropy_threshold = 1.1
+    conditions = [
+        event_df['Entropy'] > entropy_threshold,
+        event_df['PreferenceConfidence'] > 90,
+        event_df['PreferenceConfidence'] > 60,
+        event_df['PreferenceConfidence'] > 45,
+        event_df['Frequency'] <= 3,
+        ]
+    #choices = ['Omnivore', 'Focused', 'Favors', 'Mixed', 'Unclear']
+    choices = ['Omnivore', 'Strong','Favors', 'Mixed','too few']
+
+    event_df['Strength'] = np.select(conditions, choices, default='Unclear')
+
+    # Rename final key columns
+    event_df = event_df.rename(columns={
+        'Entropy': f'{event_column}Entropy',
+        'Strength': f'{event_column}Strength',
+        'RawPreferenceStrength': f'{event_column}RawPreferenceStrength',
+        'Frequency': f'{event_column}Frequency',
+        'EventCountWeighting': f'{event_column}EventCountWeighting',
+        'PreferenceConfidence': f'{event_column}PreferenceConfidence'
+    })
+
+    try:
+        logger.debug(f"{event_column}: Applied {burst_days}-day burst collapse (per Account x Category).")
+    except Exception:
+        pass
+
+    return event_df
 def calculate_event_scores(df, logger, event_column, venue_threshold=6):
     """
     Generalized function to calculate scores for EventGenre, EventClass, or EventVenue.
@@ -63,7 +215,7 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6):
         venue_counts = df[event_column].value_counts()
         valid_venues = venue_counts[venue_counts >= venue_threshold].index
         df = df[df[event_column].isin(valid_venues)]
-        logger.debug(f"Filtered out low-attendance venues. Kept {len(valid_venues)} venues.")
+        #logger.debug(f"Filtered out low-attendance venues. Kept {len(valid_venues)} venues.")
 
     # Drop duplicates to count unique events per AccountId, EventDate, and event_column
     unique_events_df = df.drop_duplicates(subset=['AccountId', 'EventDate', event_column])
@@ -128,14 +280,14 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6):
     entropy_threshold = 1.1
     conditions = [
         event_df['Entropy'] > entropy_threshold,    # Omnivore
-        event_df['PreferenceConfidence'] > 90,      # Focused
-        event_df['PreferenceConfidence'] > 60,      # Favors
-        event_df['PreferenceConfidence'] > 45,      # Mixed
-        event_df['Frequency'] <= 3,                 # Unclear
+        event_df['PreferenceConfidence'] > 90,      # Strong
+        event_df['PreferenceConfidence'] > 60,      # Medium
+        event_df['PreferenceConfidence'] > 45,      # Weak
+        event_df['Frequency'] <= 3,                 # to few concerts
         ]                                           # Unclear for remainder
 
     # Define corresponding labels.
-    choices = ['Omnivore', 'Focused','Favors', 'Mixed','Unclear']
+    choices = ['Omnivore', 'Strong','Medium', 'Weak','too few']
 
     # Apply vectorized conditional assignment
     event_df['Strength'] = np.select(conditions, choices, default='Unclear')
@@ -158,7 +310,7 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6):
 
     return event_df
 
-def calculate_genre_scores(df, logger):
+def calculate_genre_scores_bach(df, logger):
     start = perf_counter()
 
     # Replace missing genres with 'None' and delete them from this calculation.
@@ -208,7 +360,7 @@ def calculate_genre_scores(df, logger):
 
     # Add a suffix of 'Score' to EventGenre columns
     genre_df.columns = [col + 'Score' if col not in ['AccountId', 'PreferredGenre', 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col for col in genre_df.columns]
-    logger.debug(f'Genre columns: {genre_df.columns}')
+    #logger.debug(f'Genre columns: {genre_df.columns}')
 
     return genre_df
 
@@ -436,7 +588,7 @@ def calculate_patron_metrics(df, logger):
     start = perf_counter()
     today = datetime.today()
 
-    logger.debug(f'Subscriber read into Calc: {df["Subscriber"].value_counts()}')
+    #logger.debug(f'Subscriber read into Calc: {df["Subscriber"].value_counts()}')
 
     # Convert date columns to datetime
     date_columns = ['FirstEventDate', 'LatestEventDate', 'PenultimateEventDate', 'SecondEventDate', 'CreatedDate']
@@ -498,7 +650,7 @@ def calculate_patron_metrics(df, logger):
     )
 
     recency_stats = df['Recency'].describe()
-    logger.debug(f'Recency stats raw: {recency_stats}')
+    #logger.debug(f'Recency stats raw: {recency_stats}')
 
     # Calculate Lifespan
     logger.info("Calculating Lifespan...")
