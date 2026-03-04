@@ -531,7 +531,7 @@ def assign_segment(df, new_threshold, reengaged_threshold):
         Come Again, Slipping, Reminder, One&Done, Lapsed, Others.
     """
     # Initial checks for specific groups
-    if df['MonetaryScore'] == 0:
+    if df['Monetary'] == 0:
         return 'Comp'
     if df['RFMScore'] == 15:
         return 'Best'
