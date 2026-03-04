@@ -218,8 +218,19 @@ def calculate_growth_score(df, current_year):
 
 def calculate_regularity(df, logger=None):
     """
-    Calculate Regularity based on their event attendance data. It combines inter-season,
-    intra-season, average event frequency per season, and event "cluster attendance."
+    Compute a Regularity score in [0, 1] with two components:
+
+        Inter-season consistency (70%): fraction of eligible seasons attended.
+            EligibleSeasons = seasons from the patron's first season to the
+            most recent complete season. A minimum denominator of 5 prevents
+            new patrons (1-2 seasons of history) from scoring artificially high.
+
+        Intra-season depth (30%): average unique events per attended season,
+            log-scaled with a ceiling at 10 events/season.
+
+    A long-term annual subscriber who attends once per year scores ~0.70.
+    A Best patron attending 6-8 concerts per year scores ~0.90+.
+    A One&Done patron scores near 0.
     """
     from datetime import datetime
     today = datetime.today()
@@ -232,7 +243,7 @@ def calculate_regularity(df, logger=None):
     if df['EventDate'].isna().any():
         df = df.dropna(subset=['EventDate'])
 
-    # Determine FiscalYear for season-based recency calculation
+    # Determine FiscalYear (July–June) for season-based calculations
     logger.info("Calculating FiscalYear...")
     df['FiscalYear'] = df['EventDate'].apply(lambda x: x.year if x.month > 6 else x.year - 1)
 
@@ -240,47 +251,58 @@ def calculate_regularity(df, logger=None):
     df['FirstEventDate'] = df.groupby('AccountId')['EventDate'].transform('min')
     df['FirstFiscalYear'] = df.groupby('AccountId')['FiscalYear'].transform('min')
 
-    # Filter out events and seasons not eligible for each patron
+    # Filter out events before patron's first event
     df = df[df['EventDate'] >= df['FirstEventDate']]
 
-    # Calculate SeasonRecency as the difference between the current year and the fiscal year
+    # SeasonRecency: seasons ago each event occurred
     logger.info("Calculating SeasonRecency...")
     df['SeasonRecency'] = today.year - df['FiscalYear']
 
-    # Sort by AccountId and EventDate to calculate the gap between consecutive events
+    # Sort for gap calculations
     df = df.sort_values(by=['AccountId', 'EventDate'])
     df['EventGap'] = df.groupby('AccountId')['EventDate'].diff().dt.days
 
-    # Cluster events that occur within 4 consecutive days (e.g., weekend festivals)
+    # Keep EventCluster for export (retained for downstream use)
     logger.info("Calculating EventClusters...")
     df['EventCluster'] = (df.groupby('AccountId')['EventDate']
                           .transform(lambda x: (x.diff().dt.days > 3).cumsum()))
 
-    # Calculate ClusterFrequency for each account by counting unique clusters within each season
+    # ClusterFrequency: visit occasions per season (retained for export)
     df['ClusterFrequency'] = df.groupby(['AccountId', 'FiscalYear'])['EventCluster'].transform('nunique')
 
-    # Calculate SeasonCount (number of unique seasons attended) for inter-season regularity
+    # SeasonCount: distinct fiscal years with at least one event
     logger.info("Calculating SeasonCount...")
     df['SeasonCount'] = df.groupby('AccountId')['FiscalYear'].transform('nunique')
 
-    # Calculate EventFrequencyPerSeason (average events attended per season)
+    # EventFrequencyPerSeason: unique events per attended season
     logger.info("Calculating EventFrequencyPerSeason...")
-    total_events = df.groupby('AccountId')['EventCluster'].transform('count')
-    df['EventFrequencyPerSeason'] = total_events / df['SeasonCount']
+    total_unique_events = df.groupby('AccountId')['EventName'].transform('nunique')
+    df['EventFrequencyPerSeason'] = total_unique_events / df['SeasonCount']
 
-    # Define max values for normalization of metrics
-    max_season_count = df['SeasonCount'].max()
-    max_cluster_frequency = df['ClusterFrequency'].max()
-    max_event_frequency_per_season = df['EventFrequencyPerSeason'].max()
-
-    # Calculate the final Regularity score with weights for each metric
-    w1, w2, w3 = 0.4, 0.2, 0.4
+    # --- Inter-season consistency ---
+    # EligibleSeasons = seasons from patron's first to most recent complete season.
+    # current_fiscal_year: the season currently in progress (may be partial).
     logger.info("Calculating Regularity score...")
-    df['Regularity'] = (w1 * (df['SeasonCount'] / max_season_count) +
-                        w2 * (df['ClusterFrequency'] / max_cluster_frequency) +
-                        w3 * (df['EventFrequencyPerSeason'] / max_event_frequency_per_season))
+    current_fiscal_year = today.year if today.month > 6 else today.year - 1
+    df['EligibleSeasons'] = (current_fiscal_year - df['FirstFiscalYear'] + 1).clip(lower=1)
 
-    # Return the dataframe with the Regularity score
+    # Cap at 16 (matching the 15-year data window) so that very old donation/
+    # subscription records with ancient EventDates don't inflate the denominator.
+    # Minimum of 5 so patrons with < 5 seasons of history don't score artificially high.
+    df['InterSeasonConsistency'] = (
+        df['SeasonCount'] / df['EligibleSeasons'].clip(lower=5, upper=16)
+    ).clip(upper=1.0)
+
+    # --- Intra-season depth ---
+    # Log-scaled average unique events per attended season; ceiling at 10 events/season.
+    df['IntraSeasonDepth'] = (
+        np.log1p(df['EventFrequencyPerSeason']) / np.log1p(10)
+    ).clip(upper=1.0)
+
+    # --- Combined Regularity ---
+    df['Regularity'] = (0.7 * df['InterSeasonConsistency'] +
+                        0.3 * df['IntraSeasonDepth'])
+
     return df
 
 
