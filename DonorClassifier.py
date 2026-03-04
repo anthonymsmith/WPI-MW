@@ -21,7 +21,7 @@ Inputs:
     DonationsLatest.xlsx - Salesforce donation export
 
 Output:
-    Patron_Classification.xlsx - one sheet per tranche
+    Patron_Classification.xlsx - one sheet per tranche, plus unmatched donor review sheet
 """
 
 import logging
@@ -38,9 +38,18 @@ default_data_dir = '/Users/antho/Documents/WPI-MW'
 data_dir = input(f'Enter data directory [{default_data_dir}]: ').strip() or default_data_dir
 os.chdir(data_dir)
 
-patrons_file  = 'Patrons.csv'
-donor_file    = 'DonationsLatest.xlsx'
-output_file   = 'Patron_Classification.xlsx'
+patrons_file = 'Patrons.csv'
+donor_file   = 'DonationsLatest.xlsx'
+output_file  = 'Patron_Classification.xlsx'
+
+# Tranche thresholds — adjust here without touching logic below
+MAJOR_DONOR_AYM        = 1500  # Average Yearly Monetary threshold for Major Donors
+MAJOR_DONOR_LIFETIME   = 5000  # Lifetime donation threshold for Major Donors
+ACTIVE_DONATION_MONTHS = 18    # Months since last donation to be considered "active"
+PRIME_RECENCY_MONTHS   = 12    # Ticket recency threshold for Prime Non-Donor Prospects
+GROWTH_RECENCY_MONTHS  = 18    # Ticket recency threshold for Growth Prospects
+MIN_GROWTH_SCORE       = 0.0   # Minimum GrowthScore for Growth Prospects
+MIN_REGULARITY         = 0.3   # Minimum Regularity for Growth Prospects
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -82,14 +91,24 @@ donor_summary = (
     donor_df
     .groupby('Account Name', as_index=False)
     .agg(
-        LifetimeDonations = ('Amount',              'sum'),
-        AverageDonation   = ('Amount',              'mean'),
-        DonationCount     = ('Amount',              'count'),
-        FirstDonationDate = ('Close Date',          'min'),
-        LastDonationDate  = ('Last Donation Date',  'max'),
+        LifetimeDonations = ('Amount',             'sum'),
+        AverageDonation   = ('Amount',             'mean'),
+        DonationCount     = ('Amount',             'count'),
+        FirstDonationDate = ('Close Date',         'min'),
+        LastDonationDate  = ('Last Donation Date', 'max'),
     )
 )
 logger.info('%s unique donor accounts', f'{len(donor_summary):,}')
+
+# ---------------------------------------------------------------------------
+# Identify donor accounts with no matching patron record
+# ---------------------------------------------------------------------------
+matched_names    = set(patrons_df['AccountName'])
+unmatched_donors = donor_summary[
+    ~donor_summary['Account Name'].isin(matched_names)
+].copy()
+logger.info('%s donor accounts have no matching patron record (name mismatch or no ticket history)',
+            f'{len(unmatched_donors):,}')
 
 # ---------------------------------------------------------------------------
 # Join to patrons (single left join)
@@ -129,96 +148,97 @@ for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
 # ---------------------------------------------------------------------------
-# Tranche classification (mutually exclusive — each patron appears once)
+# Tranche classification (mutually exclusive — each patron appears at most once)
 # ---------------------------------------------------------------------------
 logger.info('Classifying tranches...')
 
-# Tranche 1: Top Prospects — best customers who are already active donors
-top_prospects = df[
-    df['Segment'].isin(['Best', 'Upsell']) &
+# Tranche 1: Major Donors — high-value current donors, upgrade ask
+# No segment filter: preserves donors who may show as attendance-Lapsed post-COVID
+major_donors = df[
     df['IsDonor'] &
-    (df['AYM'] >= 1000) &
-    (df['Frequency'] >= 20) &
-    (df['Recency (Months)'] <= 12) &
-    (df['Lifespan'] >= 5)
+    (df['MonthsSinceLastDonation'] <= ACTIVE_DONATION_MONTHS) &
+    ((df['AYM'] >= MAJOR_DONOR_AYM) | (df['LifetimeDonations'] >= MAJOR_DONOR_LIFETIME))
 ].copy()
-classified_ids = set(top_prospects['AccountId'])
-logger.info('  Top Prospects:          %s', f'{len(top_prospects):,}')
+classified_ids = set(major_donors['AccountId'])
+logger.info('  Major Donors:                %s', f'{len(major_donors):,}')
 
-# Tranche 2: Continued Contributors — loyal donors worth retaining
-continued_contributors = df[
+# Tranche 2: Active Donors — Renew — all other donors who gave recently
+# No segment filter for same reason as above
+active_donors = df[
     ~df['AccountId'].isin(classified_ids) &
-    df['Segment'].isin(['Best', 'Upsell', 'Slipping']) &
     df['IsDonor'] &
-    (df['AYM'] >= 100) &
-    (df['Frequency'] >= 10) &
-    (df['Recency (Months)'] <= 24) &
-    (df['Regularity'] >= 0.4)
+    (df['MonthsSinceLastDonation'] <= ACTIVE_DONATION_MONTHS)
 ].copy()
-classified_ids |= set(continued_contributors['AccountId'])
-logger.info('  Continued Contributors: %s', f'{len(continued_contributors):,}')
+classified_ids |= set(active_donors['AccountId'])
+logger.info('  Active Donors — Renew:       %s', f'{len(active_donors):,}')
 
-# Tranche 3: Growth Opportunities — high-value attendees who have never donated
-#            or whose last donation was more than 2 years ago
-growth_opportunities = df[
+# Tranche 3: Dormant Donors — Reactivate
+# Gave before but not recently; still attending (not Lapsed or One&Done)
+# Re-engaged and Come Again included: they returned to events, worth a reactivation ask
+dormant_donors = df[
     ~df['AccountId'].isin(classified_ids) &
-    df['Segment'].isin(['Best', 'Upsell']) &
-    (df['Frequency'] >= 10) &
-    (df['Recency (Months)'] <= 18) &
-    (~df['IsDonor'] | (df['MonthsSinceLastDonation'] > 24)) &
-    (df['LifetimeDonations'] < 5000)
-].copy()
-classified_ids |= set(growth_opportunities['AccountId'])
-logger.info('  Growth Opportunities:   %s', f'{len(growth_opportunities):,}')
-
-# Tranche 4: Reactivation Targets — lapsed donors with strong ticket history
-reactivation_targets = df[
-    ~df['AccountId'].isin(classified_ids) &
-    df['Segment'].isin(['Slipping', 'Lapsed']) &
     df['IsDonor'] &
-    (df['AYM'] >= 500) &
-    (df['Frequency'] >= 15) &
-    (df['Recency (Months)'] > 18)
+    (df['MonthsSinceLastDonation'] > ACTIVE_DONATION_MONTHS) &
+    ~df['Segment'].isin(['Lapsed', 'One&Done'])
 ].copy()
-classified_ids |= set(reactivation_targets['AccountId'])
-logger.info('  Reactivation Targets:   %s', f'{len(reactivation_targets):,}')
+classified_ids |= set(dormant_donors['AccountId'])
+logger.info('  Dormant Donors — Reactivate: %s', f'{len(dormant_donors):,}')
 
-# Tranche 5: New Watch List — newer patrons with early donation signals
-new_watch_list = df[
+# Tranche 4: Prime Non-Donor Prospects — first ask, high confidence
+# Best/High/Upsell segments, recently active; sorted by GrowthScore
+# New, Re-engaged, Come Again excluded — cultivate attendance first
+prime_prospects = df[
     ~df['AccountId'].isin(classified_ids) &
-    (df['Lifespan'] < 2.0) &
-    (df['LifetimeDonations'] > 100) &
-    (df['AYM'] >= 200)
-].copy()
-logger.info('  New Watch List:         %s', f'{len(new_watch_list):,}')
+    ~df['IsDonor'] &
+    df['Segment'].isin(['Best', 'High', 'Upsell']) &
+    (df['Recency (Months)'] <= PRIME_RECENCY_MONTHS)
+].sort_values('GrowthScore', ascending=False).copy()
+classified_ids |= set(prime_prospects['AccountId'])
+logger.info('  Prime Non-Donor Prospects:   %s', f'{len(prime_prospects):,}')
+
+# Tranche 5: Growth Prospects — solid attenders on upward trajectory
+# Slipping included only where GrowthScore > 0 (trajectory recovering)
+# New, Re-engaged, Come Again excluded — not yet ready for donation ask
+growth_prospects = df[
+    ~df['AccountId'].isin(classified_ids) &
+    ~df['IsDonor'] &
+    df['Segment'].isin(['Best', 'High', 'Upsell', 'Slipping']) &
+    (df['GrowthScore'] > MIN_GROWTH_SCORE) &
+    (df['Regularity'] >= MIN_REGULARITY) &
+    (df['Recency (Months)'] <= GROWTH_RECENCY_MONTHS)
+].sort_values('GrowthScore', ascending=False).copy()
+logger.info('  Growth Prospects:            %s', f'{len(growth_prospects):,}')
+
+total = (len(major_donors) + len(active_donors) + len(dormant_donors) +
+         len(prime_prospects) + len(growth_prospects))
+logger.info('Total classified: %s of %s patrons', f'{total:,}', f'{len(df):,}')
 
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
-# Columns to include in each sheet, with readable labels
 COL_MAP = {
-    'AccountName':              'Account Name',
-    'AccountId':                'Account ID',
-    'FirstName':                'First Name',
-    'LastName':                 'Last Name',
-    'Email':                    'Email Address',
-    'Segment':                  'Customer Segment',
-    'RFMScore':                 'RFM Score',
-    'Recency (Months)':         'Recency (Months)',
-    'Frequency':                'Frequency',
-    'Lifespan':                 'Customer Lifespan',
-    'AYM':                      'Avg Yearly Monetary',
-    'GrowthScore':              'Growth Score',
-    'Regularity':               'Regularity',
-    'IsDonor':                  'Is Donor',
-    'LifetimeDonations':        'Lifetime Donations',
-    'AverageDonation':          'Average Donation',
-    'DonationCount':            'Donation Count',
-    'FirstDonationDate':        'First Donation Date',
-    'LastDonationDate':         'Last Donation Date',
-    'MonthsSinceLastDonation':  'Months Since Last Donation',
-    'PreferredEventGenre':      'Favorite Genre',
-    'RegionAssignment':         'Geo Region',
+    'AccountName':             'Account Name',
+    'AccountId':               'Account ID',
+    'FirstName':               'First Name',
+    'LastName':                'Last Name',
+    'Email':                   'Email Address',
+    'Segment':                 'Customer Segment',
+    'RFMScore':                'RFM Score',
+    'Recency (Months)':        'Recency (Months)',
+    'Frequency':               'Frequency',
+    'Lifespan':                'Customer Lifespan',
+    'AYM':                     'Avg Yearly Monetary',
+    'GrowthScore':             'Growth Score',
+    'Regularity':              'Regularity',
+    'IsDonor':                 'Is Donor',
+    'LifetimeDonations':       'Lifetime Donations',
+    'AverageDonation':         'Average Donation',
+    'DonationCount':           'Donation Count',
+    'FirstDonationDate':       'First Donation Date',
+    'LastDonationDate':        'Last Donation Date',
+    'MonthsSinceLastDonation': 'Months Since Last Donation',
+    'PreferredEventGenre':     'Favorite Genre',
+    'RegionAssignment':        'Geo Region',
 }
 
 CURRENCY_COLS = {'Lifetime Donations', 'Average Donation', 'Avg Yearly Monetary'}
@@ -231,18 +251,22 @@ def _prepare(frame):
     return frame[list(available.keys())].rename(columns=available)
 
 
-def _write_sheet(writer, data, sheet_name):
+def _write_sheet(writer, data, sheet_name, currency_cols=None, date_cols=None):
     """Write a DataFrame to an Excel sheet with auto column widths and formats."""
-    out = _prepare(data)
+    if currency_cols is None:
+        currency_cols = CURRENCY_COLS
+    if date_cols is None:
+        date_cols = DATE_COLS
+    out = data if isinstance(data, pd.DataFrame) else _prepare(data)
     out.to_excel(writer, sheet_name=sheet_name, index=False)
     ws   = writer.sheets[sheet_name]
     book = writer.book
     for i, col in enumerate(out.columns):
         col_width = max(out[col].astype(str).map(len).max(), len(col)) + 2
         fmt = None
-        if col in DATE_COLS:
+        if col in date_cols:
             fmt = book.add_format({'num_format': 'mm/dd/yyyy'})
-        elif col in CURRENCY_COLS:
+        elif col in currency_cols:
             fmt = book.add_format({'num_format': '$#,##0'})
         elif out[col].dtype.kind in 'fi':
             fmt = book.add_format({'num_format': '0.0'})
@@ -254,10 +278,22 @@ def _write_sheet(writer, data, sheet_name):
 # ---------------------------------------------------------------------------
 logger.info('Writing %s...', output_file)
 with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-    _write_sheet(writer, top_prospects,          'Top Prospects')
-    _write_sheet(writer, continued_contributors, 'Continued Contributors')
-    _write_sheet(writer, growth_opportunities,   'Growth Opportunities')
-    _write_sheet(writer, reactivation_targets,   'Reactivation Targets')
-    _write_sheet(writer, new_watch_list,         'New Watch List')
+    _write_sheet(writer, _prepare(major_donors),    'Major Donors')
+    _write_sheet(writer, _prepare(active_donors),   'Active Donors - Renew')
+    _write_sheet(writer, _prepare(dormant_donors),  'Dormant Donors - Reactivate')
+    _write_sheet(writer, _prepare(prime_prospects), 'Prime Non-Donor Prospects')
+    _write_sheet(writer, _prepare(growth_prospects),'Growth Prospects')
+
+    # Unmatched donors — donor file records with no matching patron
+    unmatched_out = unmatched_donors.rename(columns={
+        'LifetimeDonations': 'Lifetime Donations',
+        'AverageDonation':   'Average Donation',
+        'DonationCount':     'Donation Count',
+        'FirstDonationDate': 'First Donation Date',
+        'LastDonationDate':  'Last Donation Date',
+    })
+    _write_sheet(writer, unmatched_out, 'Unmatched Donors',
+                 currency_cols={'Lifetime Donations', 'Average Donation'},
+                 date_cols={'First Donation Date', 'Last Donation Date'})
 
 logger.info('Done. Output written to: %s', output_file)
