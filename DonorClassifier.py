@@ -42,6 +42,7 @@ os.chdir(data_dir)
 patrons_file  = 'Patrons.csv'
 donor_file    = 'DonationsLatest.xlsx'
 output_file   = 'Patron_Classification.xlsx'
+anon_file     = 'Patron_Classification_Anon.xlsx'
 review_file   = 'DonorNameMatchReview.xlsx'
 
 # Tranche thresholds — adjust here without touching logic below
@@ -283,6 +284,8 @@ logger.info('Total actionable: %s of %s patrons', f'{total:,}', f'{len(df):,}')
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
+PII_COLS = {'Account Name', 'First Name', 'Last Name', 'Email Address'}
+
 COL_MAP = {
     'AccountName':             'Account Name',
     'AccountId':               'Account ID',
@@ -348,28 +351,42 @@ def _write_sheet(writer, data, sheet_name, currency_cols=None, date_cols=None):
 # ---------------------------------------------------------------------------
 _DATE_FMT = {'datetime_format': 'mm/dd/yyyy', 'date_format': 'mm/dd/yyyy'}
 
+unmatched_out = unmatched_donors.rename(columns={
+    'LifetimeDonations': 'Lifetime Donations',
+    'AverageDonation':   'Average Donation',
+    'DonationCount':     'Donation Count',
+    'FirstDonationDate': 'First Donation Date',
+    'LastDonationDate':  'Last Donation Date',
+})
+
+def _write_tranches(writer, drop_pii=False):
+    """Write all tranche sheets to an ExcelWriter. If drop_pii, omit PII columns."""
+    def prep(frame):
+        out = _prepare(frame)
+        if drop_pii:
+            out = out.drop(columns=[c for c in PII_COLS if c in out.columns])
+        return out
+
+    _write_sheet(writer, prep(major_donors),    'Major Donors')
+    _write_sheet(writer, prep(growth_prospects),'Growth Prospects')
+    _write_sheet(writer, prep(active_donors),   'Active Donors - Renew')
+    _write_sheet(writer, prep(dormant_donors),  'Dormant Donors - Reactivate')
+    _write_sheet(writer, prep(prime_prospects), 'Prime Non-Donor Prospects')
+    _write_sheet(writer, prep(lapsed_donors),   'Lapsed Donors - Review')
+    if not drop_pii:
+        _write_sheet(writer, unmatched_out, 'Donors - No Attendance Match',
+                     currency_cols={'Lifetime Donations', 'Average Donation'},
+                     date_cols={'First Donation Date', 'Last Donation Date'})
+
 logger.info('Writing %s...', output_file)
 with pd.ExcelWriter(output_file, engine='xlsxwriter', **_DATE_FMT) as writer:
-    _write_sheet(writer, _prepare(major_donors),    'Major Donors')
-    _write_sheet(writer, _prepare(growth_prospects),'Growth Prospects')
-    _write_sheet(writer, _prepare(active_donors),   'Active Donors - Renew')
-    _write_sheet(writer, _prepare(dormant_donors),  'Dormant Donors - Reactivate')
-    _write_sheet(writer, _prepare(prime_prospects), 'Prime Non-Donor Prospects')
-    _write_sheet(writer, _prepare(lapsed_donors),   'Lapsed Donors - Review')
-
-    # Donors in the donor file with no matching patron record (name mismatch / no ticket history)
-    unmatched_out = unmatched_donors.rename(columns={
-        'LifetimeDonations': 'Lifetime Donations',
-        'AverageDonation':   'Average Donation',
-        'DonationCount':     'Donation Count',
-        'FirstDonationDate': 'First Donation Date',
-        'LastDonationDate':  'Last Donation Date',
-    })
-    _write_sheet(writer, unmatched_out, 'Donors - No Attendance Match',
-                 currency_cols={'Lifetime Donations', 'Average Donation'},
-                 date_cols={'First Donation Date', 'Last Donation Date'})
-
+    _write_tranches(writer, drop_pii=False)
 logger.info('Done. Output written to: %s', output_file)
+
+logger.info('Writing %s...', anon_file)
+with pd.ExcelWriter(anon_file, engine='xlsxwriter', **_DATE_FMT) as writer:
+    _write_tranches(writer, drop_pii=True)
+logger.info('Done. Anonymized output written to: %s', anon_file)
 
 # ---------------------------------------------------------------------------
 # Write donor name match review (shareable, standalone file)
