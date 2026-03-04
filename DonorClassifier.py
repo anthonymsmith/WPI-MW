@@ -146,6 +146,7 @@ numeric_cols = ['AYM', 'Frequency', 'Lifespan', 'Regularity',
 for col in numeric_cols:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
+        df[col] = df[col].replace([np.inf, -np.inf], np.nan)  # guard against inf values
 
 # ---------------------------------------------------------------------------
 # Tranche classification (mutually exclusive — each patron appears at most once)
@@ -196,22 +197,31 @@ prime_prospects = df[
 classified_ids |= set(prime_prospects['AccountId'])
 logger.info('  Prime Non-Donor Prospects:   %s', f'{len(prime_prospects):,}')
 
-# Tranche 5: Growth Prospects — solid attenders on upward trajectory
-# Slipping included only where GrowthScore > 0 (trajectory recovering)
+# Tranche 5: Growth Prospects — solid attenders with consistent regularity
+# GrowthScore used for sorting (not filtering) — festival weekend clustering
+# may suppress scores for genuine regulars; investigate separately
 # New, Re-engaged, Come Again excluded — not yet ready for donation ask
 growth_prospects = df[
     ~df['AccountId'].isin(classified_ids) &
     ~df['IsDonor'] &
     df['Segment'].isin(['Best', 'High', 'Upsell', 'Slipping']) &
-    (df['GrowthScore'] > MIN_GROWTH_SCORE) &
     (df['Regularity'] >= MIN_REGULARITY) &
     (df['Recency (Months)'] <= GROWTH_RECENCY_MONTHS)
 ].sort_values('GrowthScore', ascending=False).copy()
+classified_ids |= set(growth_prospects['AccountId'])
 logger.info('  Growth Prospects:            %s', f'{len(growth_prospects):,}')
+
+# Lapsed Donors — donors whose attendance segment is Lapsed or One&Done
+# Not solicited for donations, but captured for review
+lapsed_donors = df[
+    df['IsDonor'] &
+    ~df['AccountId'].isin(classified_ids)
+].copy()
+logger.info('  Lapsed Donors (review only): %s', f'{len(lapsed_donors):,}')
 
 total = (len(major_donors) + len(active_donors) + len(dormant_donors) +
          len(prime_prospects) + len(growth_prospects))
-logger.info('Total classified: %s of %s patrons', f'{total:,}', f'{len(df):,}')
+logger.info('Total actionable: %s of %s patrons', f'{total:,}', f'{len(df):,}')
 
 # ---------------------------------------------------------------------------
 # Output helpers
@@ -283,8 +293,9 @@ with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
     _write_sheet(writer, _prepare(dormant_donors),  'Dormant Donors - Reactivate')
     _write_sheet(writer, _prepare(prime_prospects), 'Prime Non-Donor Prospects')
     _write_sheet(writer, _prepare(growth_prospects),'Growth Prospects')
+    _write_sheet(writer, _prepare(lapsed_donors),   'Lapsed Donors - Review')
 
-    # Unmatched donors — donor file records with no matching patron
+    # Donors in the donor file with no matching patron record (name mismatch / no ticket history)
     unmatched_out = unmatched_donors.rename(columns={
         'LifetimeDonations': 'Lifetime Donations',
         'AverageDonation':   'Average Donation',
@@ -292,7 +303,7 @@ with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
         'FirstDonationDate': 'First Donation Date',
         'LastDonationDate':  'Last Donation Date',
     })
-    _write_sheet(writer, unmatched_out, 'Unmatched Donors',
+    _write_sheet(writer, unmatched_out, 'Donors - No Attendance Match',
                  currency_cols={'Lifetime Donations', 'Average Donation'},
                  date_cols={'First Donation Date', 'Last Donation Date'})
 
