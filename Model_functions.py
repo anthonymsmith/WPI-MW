@@ -143,13 +143,6 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, use_tfid
         for col in event_df.columns
     ]
 
-    # Confidence: top score scaled by a log-event-count factor that saturates
-    # at 10 events.  Confidence = 1.0 means "strong signal with ample data";
-    # a single-event patron has confidence ~0.30 regardless of top score.
-    event_df['PreferenceConfidence'] = (
-        event_df['TopScore'] * np.clip(np.log1p(event_df['Frequency']) / np.log1p(10), 0, 1) * 100
-    )
-
     # Strength label — based on top score and event count
     conditions = [
         event_df['Frequency'] <= 1,                # single event — can't distinguish preference from chance
@@ -163,11 +156,10 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, use_tfid
 
     # Rename final key columns
     event_df = event_df.rename(columns={
-        'Entropy':             f'{event_column}Entropy',
-        'Strength':            f'{event_column}Strength',
-        'Frequency':           f'{event_column}Frequency',
-        'TopScore':            f'{event_column}TopScore',
-        'PreferenceConfidence': f'{event_column}PreferenceConfidence',
+        'Entropy':   f'{event_column}Entropy',
+        'Strength':  f'{event_column}Strength',
+        'Frequency': f'{event_column}Frequency',
+        'TopScore':  f'{event_column}TopScore',
     })
     logger.debug(f'{event_column}: entropy & scoring. Execution Time: {_elapsed(t)}')
 
