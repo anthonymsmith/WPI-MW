@@ -1071,7 +1071,7 @@ def get_patron_details(df,
         logger.debug(f'Genre columns: {genre_scores.columns}')
 
         logger.debug('Calculating class scores...')
-        class_scores = mod.calculate_event_scores(df, logger, event_column='EventClass')   # Class Scores
+        class_scores = mod.calculate_event_scores(df, logger, event_column='EventClass', use_tfidf=True)   # Class Scores (TF-IDF: corrects for Headliner catalog dominance)
         logger.debug(f'Genre columns: {class_scores.columns}')
 
         logger.debug('Calculating venue scores...')
@@ -1135,9 +1135,9 @@ def get_patron_details(df,
                         'ClassicalScore','ChoralScore','ContemporaryScore', 'DanceScore','BachScore',
                         'HeadlinerScore','StandardScore','Local FavoriteScore','MissionScore',
                         'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',
-                        'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreStrength','EventGenreEntropy',
-                        'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueStrength','EventVenueEntropy',
-                        'PreferredEventClass','EventClassPreferenceConfidence','EventClassStrength','EventClassEntropy',
+                        'PreferredEventGenre','EventGenreTopScore','EventGenrePreferenceConfidence','EventGenreStrength','EventGenreEntropy',
+                        'PreferredEventVenue','EventVenueTopScore','EventVenuePreferenceConfidence','EventVenueStrength','EventVenueEntropy',
+                        'PreferredEventClass','EventClassTopScore','EventClassPreferenceConfidence','EventClassStrength','EventClassEntropy',
                         'FirstEvent', 'FirstEventDate','SecondEvent', 'SecondEventDate','PenultimateEvent', 'PenultimateEventDate', 'LatestEvent','LatestEventDate', 'LatestSeason'
                         ]
 
@@ -1245,9 +1245,9 @@ def get_patron_details(df,
             output_cols = ['AccountName','ContactId','Segment', 'RFMScore', 'Lifespan', 'LatestSeason', 'RegionAssignment',
                            'Recency (Months)','Frequency','AYM', 'GrowthScore', 'Regularity','Monetary',
                            'RecencyScore', 'FrequencyScore', 'MonetaryScore','CLV_Score',
-                           'PreferredEventGenre','EventGenrePreferenceConfidence','EventGenreStrength','EventGenreEntropy',
-                           'PreferredEventVenue','EventVenuePreferenceConfidence','EventVenueStrength','EventVenueEntropy',
-                           'PreferredEventClass','EventClassPreferenceConfidence','EventClassStrength','EventClassEntropy',
+                           'PreferredEventGenre','EventGenreTopScore','EventGenrePreferenceConfidence','EventGenreStrength','EventGenreEntropy',
+                           'PreferredEventVenue','EventVenueTopScore','EventVenuePreferenceConfidence','EventVenueStrength','EventVenueEntropy',
+                           'PreferredEventClass','EventClassTopScore','EventClassPreferenceConfidence','EventClassStrength','EventClassEntropy',
                            'ClassicalScore', 'ChoralScore', 'ContemporaryScore', 'DanceScore','BachScore',
                            'HeadlinerScore','StandardScore','Local FavoriteScore','MissionScore',
                            'Mechanics HallScore','The Hanover TheatreScore','Tuckerman HallScore', 'JMACScore',

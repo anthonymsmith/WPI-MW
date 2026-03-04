@@ -38,10 +38,15 @@ def load_anonymized_dataset(anon_data_file, logger):
 
     return event_df
 
-def calculate_event_scores(df, logger, event_column, venue_threshold=6):
+def calculate_event_scores(df, logger, event_column, venue_threshold=6, use_tfidf=False):
     """
     Generalized function to calculate scores for EventGenre, EventClass, or EventVenue,
     with a 4-day burst collapse to reduce festival weekend bias (per Account x Category).
+
+    use_tfidf: if True, applies TF-IDF normalization so categories that appear in
+    fewer patrons' histories are weighted more heavily. Use for EventClass where
+    Headliner is heavily over-represented in the catalog (33% of events but 65% of
+    stated preferences on raw proportion). Genre and Venue use raw proportion.
     """
     from time import perf_counter
     import numpy as np
@@ -68,42 +73,50 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6):
     t = perf_counter()
     unique_events_df = df.drop_duplicates(subset=['AccountId', 'EventName'])
 
-    # Global frequencies (post-burst)
-    global_event_freq = unique_events_df[event_column].value_counts(normalize=True)
-
-    # Counts per account
+    # Raw counts per patron per category
     event_counts = (
         unique_events_df.groupby(['AccountId', event_column])
         .size()
         .reset_index(name='Count')
     )
-    event_counts['NormalizedCount'] = event_counts['Count'] / (
-            1 + event_counts[event_column].map(global_event_freq)
-    )
 
-    # Normalize within account
+    # Raw proportion within patron.
+    # Genre and Venue use raw proportion — the catalog is reasonably balanced
+    # across genres (Classical 41%, Choral 23%, Contemporary 20%, Dance 8%, Bach 9%)
+    # so TF-IDF distorts more than it helps.
+    # EventClass uses TF-IDF because Headliner dominates the catalog (33% of events)
+    # but captures 65% of patron preferences on raw proportion alone, masking genuine
+    # preference for Standard, Mission, and Local Favorite events.
     total_counts = (
-        event_counts.groupby('AccountId')['NormalizedCount']
+        event_counts.groupby('AccountId')['Count']
         .sum()
-        .reset_index(name='TotalNormalized')
+        .reset_index(name='Total')
     )
     event_counts = event_counts.merge(total_counts, on='AccountId')
-    event_counts['NormalizedPercentage'] = np.where(
-        event_counts['TotalNormalized'] > 0,
-        event_counts['NormalizedCount'] / event_counts['TotalNormalized'],
-        0.0
-    )
+    event_counts['Proportion'] = event_counts['Count'] / event_counts['Total']
+
+    if use_tfidf:
+        # IDF = log(total patrons / patrons who attended this category)
+        n_patrons = event_counts['AccountId'].nunique()
+        patrons_per_cat = event_counts.groupby(event_column)['AccountId'].nunique()
+        idf = np.log(n_patrons / patrons_per_cat)
+        event_counts['IDF'] = event_counts[event_column].map(idf)
+        event_counts['Proportion'] = event_counts['Proportion'] * event_counts['IDF']
+        # Re-normalize within patron so scores still sum to 1 and entropy is meaningful
+        norm = event_counts.groupby('AccountId')['Proportion'].transform('sum')
+        event_counts['Proportion'] = event_counts['Proportion'] / norm
+
     logger.debug(f'{event_column}: aggregation & normalization. Execution Time: {_elapsed(t)}')
 
-    # Wide pivot
+    # Wide pivot — each cell is the raw proportion (0–1)
     t = perf_counter()
     event_df = (
-        event_counts.pivot(index='AccountId', columns=event_column, values='NormalizedPercentage')
+        event_counts.pivot(index='AccountId', columns=event_column, values='Proportion')
         .fillna(0)
         .reset_index()
     )
 
-    # Frequency = distinct EventName per account (post-burst)
+    # Frequency = distinct EventName per account
     freq_series = unique_events_df.groupby('AccountId')['EventName'].nunique()
     event_df['Frequency'] = event_df['AccountId'].map(freq_series).fillna(0).astype(int)
     logger.debug(f'{event_column}: pivot & frequency. Execution Time: {_elapsed(t)}')
@@ -114,59 +127,47 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6):
         proportions = row[row > 0]
         return entropy(proportions) if len(proportions) else 0.0
 
-    event_df['Entropy'] = event_df.drop(columns=['AccountId', 'Frequency']).apply(calculate_entropy, axis=1)
+    score_cols = [c for c in event_df.columns if c not in ['AccountId', 'Frequency']]
+    event_df['Entropy'] = event_df[score_cols].apply(calculate_entropy, axis=1)
 
-    # Preference strength
-    event_df['RawPreferenceStrength'] = 1 / (0.8 + event_df['Entropy'])
-
-    # Preferred category
+    # Preferred category = highest raw proportion
     preferred_col = f'Preferred{event_column}'
-    event_df[preferred_col] = (
-        event_df.drop(columns=['AccountId', 'Entropy', 'RawPreferenceStrength', 'Frequency']).idxmax(axis=1)
-    )
+    event_df[preferred_col] = event_df[score_cols].idxmax(axis=1)
 
+    # Top score (highest proportion for this patron)
+    event_df['TopScore'] = event_df[score_cols].max(axis=1)
+
+    # Rename category columns to *Score
     event_df.columns = [
-        (col + 'Score' if col not in ['AccountId', preferred_col, 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col)
+        (col + 'Score' if col not in ['AccountId', preferred_col, 'Entropy', 'Frequency', 'TopScore'] else col)
         for col in event_df.columns
     ]
 
-    # Event count weighting
-    max_events = event_df['Frequency'].max() if len(event_df) else 0
-    event_df['EventCountWeighting'] = (
-        np.log1p(1 + event_df['Frequency']) / np.log1p(1 + max_events) if max_events > 0 else 0.0
+    # Confidence: top score scaled by a log-event-count factor that saturates
+    # at 10 events.  Confidence = 1.0 means "strong signal with ample data";
+    # a single-event patron has confidence ~0.30 regardless of top score.
+    event_df['PreferenceConfidence'] = (
+        event_df['TopScore'] * np.clip(np.log1p(event_df['Frequency']) / np.log1p(10), 0, 1) * 100
     )
 
-    # Reduce preference for low counts
-    event_df.loc[event_df['Frequency'] <= 3, 'RawPreferenceStrength'] *= 0.5
-
-    # Confidence
-    alpha = 0.4
-    event_df['PreferenceConfidence'] = np.clip(
-        ((1 - alpha) * event_df['RawPreferenceStrength'] + alpha * event_df['EventCountWeighting']) * 100,
-        0, 100
-    )
-
-    # Strength label
-    entropy_threshold = 1.1
+    # Strength label — based on top score and event count
     conditions = [
-        event_df['Entropy'] > entropy_threshold,
-        event_df['PreferenceConfidence'] > 90,
-        event_df['PreferenceConfidence'] > 60,
-        event_df['PreferenceConfidence'] > 45,
-        event_df['Frequency'] <= 3,
-        ]
-    choices = ['Omnivore', 'Strong','Favors', 'Mixed','too few']
+        event_df['Frequency'] <= 1,                # single event — can't distinguish preference from chance
+        event_df['TopScore'] >= 0.70,              # clear dominant preference
+        event_df['TopScore'] >= 0.50,              # decided lean
+        event_df['TopScore'] < 0.30,               # spread across many categories
+    ]
+    choices = ['too few', 'Strong', 'Favors', 'Omnivore']
 
-    event_df['Strength'] = np.select(conditions, choices, default='Unclear')
+    event_df['Strength'] = np.select(conditions, choices, default='Mixed')
 
     # Rename final key columns
     event_df = event_df.rename(columns={
-        'Entropy': f'{event_column}Entropy',
-        'Strength': f'{event_column}Strength',
-        'RawPreferenceStrength': f'{event_column}RawPreferenceStrength',
-        'Frequency': f'{event_column}Frequency',
-        'EventCountWeighting': f'{event_column}EventCountWeighting',
-        'PreferenceConfidence': f'{event_column}PreferenceConfidence'
+        'Entropy':             f'{event_column}Entropy',
+        'Strength':            f'{event_column}Strength',
+        'Frequency':           f'{event_column}Frequency',
+        'TopScore':            f'{event_column}TopScore',
+        'PreferenceConfidence': f'{event_column}PreferenceConfidence',
     })
     logger.debug(f'{event_column}: entropy & scoring. Execution Time: {_elapsed(t)}')
 
