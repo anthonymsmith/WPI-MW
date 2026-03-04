@@ -21,7 +21,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import entropy
-from sklearn.linear_model import LinearRegression
 
 def _elapsed(start):
     """Return elapsed seconds since `start` as a '%.2f' string."""
@@ -39,7 +38,7 @@ def load_anonymized_dataset(anon_data_file, logger):
 
     return event_df
 
-def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_days=4):
+def calculate_event_scores(df, logger, event_column, venue_threshold=6):
     """
     Generalized function to calculate scores for EventGenre, EventClass, or EventVenue,
     with a 4-day burst collapse to reduce festival weekend bias (per Account x Category).
@@ -63,31 +62,11 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
         valid_venues = venue_counts[venue_counts >= venue_threshold].index
         df = df[df[event_column].isin(valid_venues)]
 
-    # -------- 4-day burst collapse (per AccountId x Category) --------
-    def _collapse_group(g, window_days):
-        g = g.sort_values('EventDate')
-        dates = g['EventDate'].to_numpy()
-        keep = np.ones(len(g), dtype=bool)
-        last_kept_idx = 0
-        for i in range(1, len(g)):
-            dt_days = (dates[i] - dates[last_kept_idx]) / np.timedelta64(1, 'D')
-            if dt_days < window_days:
-                keep[i] = False
-            else:
-                last_kept_idx = i
-        return g.loc[keep]
-
+    # Deduplicate: one attendance per patron per event name.
+    # This collapses multiple ticket types/instances of the same concert
+    # without suppressing legitimate back-to-back attendance of different events.
     t = perf_counter()
-    df = (
-        df.groupby(['AccountId', event_column], group_keys=False)
-        .apply(lambda g: _collapse_group(g, burst_days))
-        .reset_index(drop=True)
-    )
-    logger.debug(f'{event_column}: burst collapse. Execution Time: {_elapsed(t)}')
-
-    # Unique events after burst collapse
-    t = perf_counter()
-    unique_events_df = df.drop_duplicates(subset=['AccountId', 'EventDate', event_column])
+    unique_events_df = df.drop_duplicates(subset=['AccountId', 'EventName'])
 
     # Global frequencies (post-burst)
     global_event_freq = unique_events_df[event_column].value_counts(normalize=True)
@@ -196,52 +175,46 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
 
 def calculate_growth_score(df, current_year):
     """
-    Estimate monetary growth over time using weighted linear regression.
-    More recent years are weighted higher to emphasize recent growth.
+    Measure engagement trend by comparing a patron's recent event attendance
+    to their own historical average.
+
+    Uses event counts per fiscal year (not dollars) so that stable long-term
+    patrons score near zero rather than negative.
 
     Args:
-        df (pd.DataFrame): Dataframe with 'FiscalYear' and 'Monetary' columns.
-        current_year (int): The current fiscal year.
+        df (pd.DataFrame): Per-patron per-year rows with 'FiscalYear' and
+                           'EventCount' columns (zeros for seasons with no attendance).
+        current_year (int): The current calendar year, used to exclude the
+                            in-progress fiscal year from the calculation.
 
     Returns:
-        float: Growth score (slope of weighted regression line), or None if insufficient data.
+        float: (recent_avg / historical_avg) - 1, where:
+                 > 0  recently more active than their own average (growing)
+                   0  stable, or fewer than 3 complete seasons of data
+                 < 0  recently less active than their own average (declining)
     """
-    # Define weights for the most recent 5 years
-    weight_map = {
-        0: 0.4,  # Current year
-        -1: 0.3,  # Last year
-        -2: 0.2,
-        -3: 0.1,
-        -4: 0.05
-    }
+    df = df.sort_values('FiscalYear')
 
-    # Apply weights using a mapping
-    df['Weight'] = df['FiscalYear'].apply(lambda y: weight_map.get(y - current_year, 0))
+    # Trim history to the patron's first season with any events
+    active = df[df['EventCount'] > 0]
+    if active.empty:
+        return 0.0
+    df = df[df['FiscalYear'] >= active['FiscalYear'].min()]
 
-    # Remove years that received zero weight (older than 5 years)
-    df = df[df['Weight'] > 0]
+    # Exclude the current (possibly partial) fiscal year.
+    # Fiscal year N runs July N through June N+1; if today is in calendar year
+    # current_year, the fiscal year current_year-1 may still be in progress.
+    complete = df[df['FiscalYear'] < current_year - 1]
 
-    # Ensure we have at least 2 different fiscal years
-    if df['FiscalYear'].nunique() < 2:
-        return None  # Not enough data for meaningful regression
+    if len(complete) < 3:
+        return 0.0  # Too few complete seasons for a meaningful signal
 
-    # Prepare regression variables
-    fiscal_years = df['FiscalYear'].values.reshape(-1, 1)
-    monetary_values = df['Monetary'].values
+    historical_avg = complete['EventCount'].mean()
+    if historical_avg == 0:
+        return 0.0
 
-    # Apply weight scaling
-    weighted_monetary = monetary_values * df['Weight'].values
-
-    # Log transform monetary values to reduce impact of large values (optional)
-    log_monetary = np.log1p(1 + weighted_monetary)  # log(1 + x) prevents log(0) errors
-
-    # Fit weighted linear regression
-    reg = LinearRegression().fit(fiscal_years, log_monetary)
-
-    # Extract slope as growth score (adjusted for log scale)
-    growth_score = reg.coef_[0]
-
-    return growth_score
+    recent_avg = complete.tail(2)['EventCount'].mean()
+    return (recent_avg / historical_avg) - 1.0
 
 def calculate_regularity(df, logger=None):
     """
@@ -406,18 +379,22 @@ def calculate_patron_metrics(df, logger):
     # Create a FiscalYear column
     df['FiscalYear'] = df['CreatedDate'].apply(lambda x: x.year if x.month > 6 else x.year - 1)
 
-    # Aggregate monetary value by Fiscal Year
-    monetary_by_fiscal_year = df.groupby(['AccountId', 'FiscalYear']).agg({'Monetary': 'sum'}).reset_index()
+    # Aggregate monetary value and event count by Fiscal Year
+    yearly_stats = (
+        df.groupby(['AccountId', 'FiscalYear'])
+        .agg(Monetary=('Monetary', 'sum'), EventCount=('EventName', 'nunique'))
+        .reset_index()
+    )
 
     # Get the range of fiscal years
     fiscal_years_range = pd.DataFrame({
-        'FiscalYear': range(monetary_by_fiscal_year['FiscalYear'].min(), today.year + 1)
+        'FiscalYear': range(yearly_stats['FiscalYear'].min(), today.year + 1)
     })
 
     # Cartesian join for fiscal years
     unique_accounts = df[['AccountId']].drop_duplicates()
     all_years = unique_accounts.merge(fiscal_years_range, how='cross').drop_duplicates()
-    all_years = all_years.merge(monetary_by_fiscal_year, on=['AccountId', 'FiscalYear'], how='left').fillna(0)
+    all_years = all_years.merge(yearly_stats, on=['AccountId', 'FiscalYear'], how='left').fillna(0)
 
     # Calculate growth scores
     logger.info("Calculating GrowthScore...")
