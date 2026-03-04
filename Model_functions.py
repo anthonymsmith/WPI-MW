@@ -425,13 +425,31 @@ def calculate_patron_metrics(df, logger):
     growth_scores = all_years.groupby('AccountId').apply(calculate_growth_score, current_year).reset_index()
     growth_scores.columns = ['AccountId', 'GrowthScore']
 
-    # Calculate Average Yearly Monetary spend
+    # Calculate Average Yearly Monetary — exponentially weighted toward recent years.
+    # weight = AYM_DECAY ^ (current_year - FiscalYear), so last year counts fully,
+    # 2 years ago at 70%, 3 years ago at 49%, etc. (~66% of weight on last 3 years).
+    # History is trimmed to each patron's first active year so new patrons are not
+    # diluted by years of zeros that predate their first transaction.
     logger.info("Calculating Average Yearly Monetary spend...")
-    aym_df = all_years.groupby('AccountId').agg(
-        total_monetary=('Monetary', 'sum'),
-        active_fiscal_years=('Monetary', lambda x: (x > 0).sum())
-    ).reset_index()
-    aym_df['AYM'] = aym_df['total_monetary'] / aym_df['active_fiscal_years']
+    AYM_DECAY = 0.7
+    _first_active = (
+        all_years[all_years['Monetary'] > 0]
+        .groupby('AccountId', as_index=False)['FiscalYear'].min()
+        .rename(columns={'FiscalYear': 'FirstActiveYear'})
+    )
+    _aw = (all_years
+           .merge(_first_active, on='AccountId')
+           .query('FiscalYear >= FirstActiveYear')
+           .copy())
+    _aw['_w']  = AYM_DECAY ** (current_year - _aw['FiscalYear'])
+    _aw['_wm'] = _aw['_w'] * _aw['Monetary']
+    aym_df = (
+        _aw.groupby('AccountId')
+           .agg(weighted_sum=('_wm', 'sum'), weight_total=('_w', 'sum'))
+           .reset_index()
+    )
+    aym_df['AYM'] = aym_df['weighted_sum'] / aym_df['weight_total']
+    aym_df = aym_df[['AccountId', 'AYM']]
 
     # Call the function to calculate adjusted regularity
     logger.info("Calculating Regularity...")
@@ -472,27 +490,29 @@ def calculate_patron_metrics(df, logger):
     metrics_df['Engagement'] = safe_divide(metrics_df['Frequency'], metrics_df['DaysFromFirstEvent'])
 
     # Apply binning for RFM scores
-    # Ensure Recency is numeric and clean
-    # Apply Recency binning
-    bins = [-1, 120, 400, 700, 1500, 2000, float('inf')]
+    # Recency: days since last event, season-aligned thresholds
+    #   5 = within 6 months, 4 = 6–12 months, 3 = 1–2 years,
+    #   2 = 2–4 years, 1 = 4–7 years, 0 = >7 years
+    bins = [-1, 180, 365, 730, 1460, 2555, float('inf')]
     labels = [5, 4, 3, 2, 1, 0]
     metrics_df['RecencyScore'] = pd.cut(metrics_df['Recency'], bins=bins, labels=labels, right=False)
-
-    # Convert to float first, then fill NaNs, and convert to int
     metrics_df['RecencyScore'] = metrics_df['RecencyScore'].astype(float).fillna(0).astype(int)
 
-    # Apply Frequency binning
-    bins = [-1, 1, 3, 5, 8, 11, float('inf')]
+    # Frequency: lifetime distinct events attended
+    #   0 = 1 event (one-timer), 1 = 2–4, 2 = 5–9, 3 = 10–19, 4 = 20–29, 5 = 30+
+    bins = [-1, 2, 5, 10, 20, 30, float('inf')]
     labels = [0, 1, 2, 3, 4, 5]
     metrics_df['FrequencyScore'] = pd.cut(metrics_df['Frequency'], bins=bins, labels=labels, right=False)
     metrics_df['FrequencyScore'] = metrics_df['FrequencyScore'].astype(float).fillna(0).astype(int)
 
     logger.info("Frequency Score done...")
 
-    # Apply Monetary binning
-    bins = [-1, 10, 80, 200, 400, 1000, float('inf')]
+    # Monetary: uses AYM (decay-weighted annual spend) rather than lifetime total,
+    # so current engagement drives the score rather than historical accumulation.
+    #   0 = <$10/yr, 1 = $10–50, 2 = $50–120, 3 = $120–250, 4 = $250–500, 5 = $500+
+    bins = [-1, 10, 50, 120, 250, 500, float('inf')]
     labels = [0, 1, 2, 3, 4, 5]
-    metrics_df['MonetaryScore'] = pd.cut(metrics_df['Monetary'], bins=bins, labels=labels, right=False)
+    metrics_df['MonetaryScore'] = pd.cut(metrics_df['AYM'], bins=bins, labels=labels, right=False)
     metrics_df['MonetaryScore'] = metrics_df['MonetaryScore'].astype(float).fillna(0).astype(int)
 
     logger.info("Monetary Score done...")
@@ -518,28 +538,32 @@ def assign_segment(df, new_threshold, reengaged_threshold):
     if df['FrequentBulkBuyer']:
         return 'Group Buyer'
 
-    # Check for recency and frequency conditions
+    # Lapsed / one-time — no realistic path to re-engagement without outreach
     if df['RecencyScore'] < 2:
         return 'One&Done' if df['Frequency'] <= 1 else 'Lapsed'
 
-    if df['RecencyScore'] <= 3 and df['Frequency'] >= 2:
-        return 'Slipping'
-
-    # Segment based on event timing and engagement
+    # Segment based on event timing (New / Re-engaged checked before engagement tier)
     if df['DaysFromFirstEvent'] <= new_threshold:
         return 'New'
     if df['RecentEventYearsGap'] > reengaged_threshold:
         return 'Re-engaged'
 
-    # High engagement and subscriber potential
-    if df['RecencyScore'] >= 4 and df['FrequencyScore'] >= 4:
+    # High engagement — recently active with meaningful frequency
+    if df['RecencyScore'] >= 4 and df['FrequencyScore'] >= 3:
         return 'High'
-    # Recency and Frequency based segments for remaining cases
-    if df['RecencyScore'] >= 3 and df['FrequencyScore'] >= 2:
+
+    # Upsell — recently active or active within 2 years, solid frequency history
+    # Checked before Slipping so R=3/F>=3 patrons are not mis-labelled as drifting
+    if df['RecencyScore'] >= 3 and df['FrequencyScore'] >= 3:
         return 'Upsell'
+
+    # Slipping — meaningful history (5+ events, FrequencyScore >= 2) but attendance
+    # has grown stale (R <= 3, i.e. last event 1+ year ago)
+    if df['RecencyScore'] <= 3 and df['FrequencyScore'] >= 2:
+        return 'Slipping'
+
     if df['RecencyScore'] >= 3:
         return 'Come Again'
-    # Reminder segment for moderate recency and frequency
     if df['RecencyScore'] >= 2:
         return 'Reminder'
     return 'Others'
