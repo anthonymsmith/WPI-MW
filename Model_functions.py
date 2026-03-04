@@ -306,9 +306,7 @@ def calculate_patron_metrics(df, logger):
         Recency, Frequency, and Monetary are each binned 0-5 and summed into RFMScore.
         Also computes DaysToReturn, DaysFromPenultimateEvent, ClusterFrequency, and Engagement.
     """
-    from datetime import datetime, timedelta
-    import numpy as np
-    import pandas as pd
+    from datetime import datetime
 
     start = perf_counter()
     today = datetime.today()
@@ -330,16 +328,14 @@ def calculate_patron_metrics(df, logger):
     df.loc[single_event_mask, ['SecondEvent', 'SecondEventDate', 'PenultimateEvent', 'PenultimateEventDate']] = np.nan
     df.loc[single_event_mask, ['DaysToReturn', 'DaysFromPenultimateEvent']] = np.nan
 
-    # Calculate DaysToReturn for multi-event patrons
     if multi_event_mask.any():
+        # DaysToReturn: gap between first and second event
         df.loc[multi_event_mask, 'DaysToReturn'] = (
             (df['SecondEventDate'] - df['FirstEventDate'])
             .where(df['SecondEventDate'].notna() & df['FirstEventDate'].notna(), np.nan)
             .dt.days
         )
-
-    # Calculate DaysFromPenultimateEvent for multi-event patrons
-    if multi_event_mask.any():
+        # DaysFromPenultimateEvent: gap between penultimate and latest event
         df.loc[multi_event_mask, 'DaysFromPenultimateEvent'] = (
             (df['LatestEventDate'] - df['PenultimateEventDate'])
             .where(df['PenultimateEventDate'].notna(), np.nan)
@@ -347,48 +343,22 @@ def calculate_patron_metrics(df, logger):
         )
         df['DaysFromPenultimateEvent'] = df['DaysFromPenultimateEvent'].clip(lower=0)
 
-    # Calculate MonthsFromFirstEvent
-    logger.info("Calculating MonthsFromFirstEvent...")
-    if 'FirstEventDate' in df.columns:
-        df['DaysFromFirstEvent'] = (
-            (today - df['FirstEventDate'])
-            .where(df['FirstEventDate'].notna(), np.nan)
-            .dt.days
-        )
-
-    # Calculate Recency
-    logger.info("Calculating Recency...")
-    if 'LatestEventDate' in df.columns:
-        df['DaysFromLatestEvent'] = (
-            (today - df['LatestEventDate'])
-            .where(df['LatestEventDate'].notna(), np.nan)  # Handle missing dates
-            .dt.days  # Extract days
-        )
-        df['Recency'] = df['DaysFromLatestEvent']
-
-    # Ensure Recency is numeric before further processing
-    # Clip to between 4000 and 0 for binning.
-    df['Recency'] = (
-        pd.to_numeric(df['Recency'], errors='coerce')  # Ensure numeric
-        .fillna(4000)                                  # Replace NaN with 4000
-        .clip(lower=0, upper=4000)                     # Clip values between 0 and 4000
+    df['DaysFromFirstEvent'] = (
+        (today - df['FirstEventDate']).where(df['FirstEventDate'].notna(), np.nan).dt.days
     )
 
-    recency_stats = df['Recency'].describe()
-    logger.debug(f'Recency stats raw: {recency_stats}')
+    df['DaysFromLatestEvent'] = (
+        (today - df['LatestEventDate']).where(df['LatestEventDate'].notna(), np.nan).dt.days
+    )
+    # Recency: clip to [0, 4000] for binning; 4000 = effectively never attended
+    df['Recency'] = df['DaysFromLatestEvent'].clip(lower=0, upper=4000).fillna(4000)
+    logger.debug('Recency stats: %s', df['Recency'].describe())
 
-    # Calculate Lifespan
-    logger.info("Calculating Lifespan...")
-    if 'DaysFromFirstEvent' in df.columns and 'DaysFromLatestEvent' in df.columns:
-        df['Lifespan'] = (df['DaysFromFirstEvent'] - df['DaysFromLatestEvent']) / 365.0
-        df['Lifespan'] = np.where(df['Lifespan'] == 0, 0.01, df['Lifespan'])
+    df['Lifespan'] = (df['DaysFromFirstEvent'] - df['DaysFromLatestEvent']) / 365.0
+    df['Lifespan'] = np.where(df['Lifespan'] == 0, 0.01, df['Lifespan'])
 
-    # Frequency = Count of distinct events attended
-    logger.info("Calculating Frequency...")
+    # Frequency = distinct events attended; Monetary = Quantity * ItemPrice
     df['Frequency'] = df.groupby('AccountId')['EventName'].transform('nunique')
-
-    # Include ticket donations + ticket sales. Monetary = Quantity * ItemPrice
-    logger.info("Calculating Monetary...")
     df['Monetary'] = pd.to_numeric(df['Quantity'], errors='coerce') * pd.to_numeric(df['ItemPrice'], errors='coerce')
 
     # Create a FiscalYear column
@@ -443,7 +413,6 @@ def calculate_patron_metrics(df, logger):
     aym_df['AYM'] = aym_df['weighted_sum'] / aym_df['weight_total']
     aym_df = aym_df[['AccountId', 'AYM']]
 
-    # Call the function to calculate adjusted regularity
     logger.info("Calculating Regularity...")
     df = calculate_regularity(df, logger)
 
@@ -496,8 +465,6 @@ def calculate_patron_metrics(df, logger):
     labels = [0, 1, 2, 3, 4, 5]
     metrics_df['FrequencyScore'] = pd.cut(metrics_df['Frequency'], bins=bins, labels=labels, right=False)
     metrics_df['FrequencyScore'] = metrics_df['FrequencyScore'].astype(float).fillna(0).astype(int)
-
-    logger.info("Frequency Score done...")
 
     # Monetary: uses AYM (decay-weighted annual spend) rather than lifetime total,
     # so current engagement drives the score rather than historical accumulation.

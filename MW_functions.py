@@ -221,77 +221,39 @@ def load_sales_file(sales_file, yearsOfData, logger):
 def sales_initial_prep(df, logger):
     """Remove deleted tickets, fill missing values, generate SHA-256 AccountIds, and drop test events."""
     start = perf_counter()
-    logger.debug(df.shape)
-    logger.debug(f'Sales pre-prep columns: {df.columns}')
-
-    # Convert date to a simple date format
-    #df['EventDate_sales'] = pd.to_datetime(df['EventDate_sales'].copy()).dt.date
-    df['EventDate_sales'] = pd.to_datetime(df['EventDate_sales'], format='mixed').dt.date
-
     df = df.copy()
 
-    #Remove deleted tickets, as these were placeholders for subscriptions or canceled orders.
+    df['EventDate_sales'] = pd.to_datetime(df['EventDate_sales'], format='mixed').dt.date
+
+    # Remove deleted tickets (placeholders for subscriptions or cancelled orders)
     df = df[df['TicketStatus'] != 'Deleted']
 
-    # These AccountName steps are done at transaction-level
-    #  only because we need an AccountName to generate the AccountId.
-    #  We should get AccountId from saleforce and all of this could be
-    #  then moved to Patron Detail Processing.
-    # set any null AccountNames to walk up
+    # AccountName steps done at transaction-level because we need a name to generate AccountId.
     df['AccountName'] = df['AccountName'].fillna('Walk Up Sales')
 
-    # for debug only and expensive at transaction-level.
-    null_accountnames = df[df['AccountName'].isnull()]
-    logger.debug(f'List of records missing account names: {null_accountnames}')
-
-    # Assign AccountId. Remember ContactId is at contact level.
+    # Assign AccountId (ContactId is at contact level, not account level)
     df['AccountId'] = df['AccountName'].apply(generate_identifier)
 
-    # Define a dictionary for numeric columns and their fillna values
-    numeric_fillna_dict = {
-        'ItemPrice': 0,
-        'Quantity': 0,
-        'DonationAmount': 0,
-        'DiscountTotal': 0,
-        'UnitDiscount': 0,
-        'PreDiscountTotal': 0,
-        'PriceLevel': 0,
-        'Total': 0
-        }
-    # Convert columns to numeric and fill NaN values
-    for col, fill_value in numeric_fillna_dict.items():
+    # Numeric columns — coerce and fill
+    numeric_fillna = {
+        'ItemPrice': 0, 'Quantity': 0, 'DonationAmount': 0,
+        'DiscountTotal': 0, 'UnitDiscount': 0, 'PreDiscountTotal': 0,
+        'PriceLevel': 0, 'Total': 0,
+    }
+    for col, fill_value in numeric_fillna.items():
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(fill_value)
 
-    # For non-numeric columns that may be Null. May need to add more, as needed.
-    non_numeric_fillna_dict = {
-        'DonationName': 'None',
-        'DiscountCode': 'None',
-        'UnitDiscountType': 'None'
-    }
-    # Fill NaN values for non-numeric columns
-    df.fillna(non_numeric_fillna_dict, inplace=True)
-
-    # Fill in null AccountNames with First Name + Last Name
-    logger.debug(f"Number of missing AccountNames: {df['AccountName'].isna().sum()}")
-    df.loc[df['AccountName'].isna(), 'AccountName'] = df['FirstName'] + ' ' + df['LastName'] + ' ' + '(generated)'
+    df.fillna({'DonationName': 'None', 'DiscountCode': 'None', 'UnitDiscountType': 'None'}, inplace=True)
 
     # Clean up Event Names and Instances
     df['EventName_sales'] = df['EventName_sales'].astype(str)
     df['EventInstance_sales'] = df['EventInstance_sales'].astype(str)
 
     # Remove test events and instances
-    test_event_mask = ~(df['EventName_sales'].str.contains(' test', case=False))
-    df = df.loc[test_event_mask]
-    test_instance_mask = ~(df['EventInstance_sales'].str.contains(' test', case=False))
-    df = df.loc[test_instance_mask]
-    logger.debug('Removed Test sales')
-    logger.debug(df.head)
-    logger.debug(df.shape)
+    df = df.loc[~df['EventName_sales'].str.contains(' test', case=False)]
+    df = df.loc[~df['EventInstance_sales'].str.contains(' test', case=False)]
 
     logger.info(f'Initial sales prep complete. Execution Time: {_elapsed(start)}')
-
-    logger.debug(f'Sales post initial-prep columns: {df.columns}')
-
     return df
 def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logger):
     """
@@ -302,61 +264,25 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
         status applied from board_file.
     """
     start = perf_counter()
-    logger.debug(f'Sales columns: {sales_df.columns}')
-
     # Clean up venue names
-    #sales_df['VenueName_sales'].fillna('None', inplace=True)
     sales_df['VenueName_sales'] = sales_df['VenueName_sales'].fillna('None')
     sales_df.loc[sales_df['VenueName_sales'].str.contains("Mechanics"), 'VenueName_sales'] = 'Mechanics Hall'
 
-    logger.debug(np.unique(sales_df.loc[sales_df['VenueName_sales'].str.contains("Mechanics")]['VenueName_sales']))
-    logger.debug(sales_df.dtypes)
-
-    # Load the chorus member list and drop missing AccountNames in one step
-    chorus_df = pd.read_excel(chorus_list_file, usecols=['Account Name']).dropna()
-
-    # Create a set of unique AccountNames
-    chorus_members = set(chorus_df['Account Name'])
-
-    # Add the 'ChorusMember' column to sales_df
+    # Chorus members: from the chorus member list or from use of DUES discount
+    chorus_members = set(pd.read_excel(chorus_list_file, usecols=['Account Name']).dropna()['Account Name'])
     sales_df['ChorusMember'] = sales_df['AccountName'].isin(chorus_members)
 
-    logger.debug(f'ChorusMember column added: {sales_df["ChorusMember"].head()}')
-    logger.debug(f'sales_df shape: {sales_df.shape}')
-
-    # Load the chorus member list and drop missing AccountNames in one step
+    # Board/corporator status: merge on FirstName + LastName
     board_df = pd.read_csv(board_file).dropna()
-
-    # Parse 'AccountName' into 'FirstName' and 'LastName'
-    if 'AccountName' in board_df.columns:
-        board_df[['FirstName', 'LastName']] = board_df['AccountName'].str.split(pat=' ', n=1, expand=True)
-
-    # Merge the two DataFrames on FirstName and LastName
+    board_df[['FirstName', 'LastName']] = board_df['AccountName'].str.split(pat=' ', n=1, expand=True)
     sales_df = sales_df.merge(board_df[['FirstName', 'LastName', 'PatronStatus']],
                                on=['FirstName', 'LastName'], how='left')
-
-    # Add a new column for the state or 'patron' if not matched
     sales_df['PatronStatus'] = sales_df['PatronStatus'].fillna('patron')
 
-    # Debug logs
-    logger.debug(f'Board member column added: {sales_df.columns}')
-    logger.debug(f'sales_df shape: {sales_df.shape}')
-
-    # Now add a field for any Accounts who bought a ticket with a DUES coupon
     sales_df['DuesTxn'] = sales_df['DiscountCode'].str.contains("Chorus Dues", na=False)
-
-    # Chorus member is true if in the chorus member list or has ever used DUES for tickets.
     sales_df['ChorusMember'] = sales_df['ChorusMember'] | sales_df['DuesTxn']
-
-    # Add Student field based on use of 'Student' discount code.
     sales_df['Student'] = sales_df['TicketType'].str.contains("Student", na=False)
 
-    # Add Subscriber field based on subscription practice.
-
-    # Ensure EventName_sales is treated as a string
-    sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
-
-# Ensure EventName_sales is a string to avoid errors
     sales_df['EventName_sales'] = sales_df['EventName_sales'].astype(str)
 
     # Calculate the current season dynamically (season starts in July)
