@@ -218,7 +218,7 @@ def load_sales_file(sales_file, yearsOfData, logger):
 
     logger.debug(sales_df.shape)
     return sales_df
-def sales_initial_prep(df, Account_file, logger):
+def sales_initial_prep(df, logger):
     """Remove deleted tickets, fill missing values, generate SHA-256 AccountIds, and drop test events."""
     start = perf_counter()
     logger.debug(df.shape)
@@ -274,10 +274,6 @@ def sales_initial_prep(df, Account_file, logger):
     # Fill in null AccountNames with First Name + Last Name
     logger.debug(f"Number of missing AccountNames: {df['AccountName'].isna().sum()}")
     df.loc[df['AccountName'].isna(), 'AccountName'] = df['FirstName'] + ' ' + df['LastName'] + ' ' + '(generated)'
-
-    #merge in AccountIds - this method assumes an AccountId file has been created. Salesforce doesn't do that, though.
-    #acc_df = pd.read_csv(Account_file).rename(columns={'Account Name': 'AccountName','Account ID': 'AccountId'})
-    #df = df.merge(acc_df,on='AccountName',how='left')
 
     # Clean up Event Names and Instances
     df['EventName_sales'] = df['EventName_sales'].astype(str)
