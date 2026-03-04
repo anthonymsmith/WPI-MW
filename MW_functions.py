@@ -27,31 +27,13 @@ import requests
 from requests.exceptions import RequestException
 
 # Processing functions
-"""
-Function: load_event_manifest
+def _elapsed(start):
+    """Return elapsed seconds since `start` as a '%.2f' string."""
+    return f'{timedelta(seconds=perf_counter() - start).total_seconds():.2f}'
 
-Description:
-    This function loads and processes an event manifest file from an Excel sheet. 
-    It performs initial cleaning, such as removing test events, fixing date formats, filling missing values, 
-    and sorting the events by date, name, and instance. The function prepares the event data for further analysis 
-    and logs the process along with execution time.
 
-Parameters:
-    manifest_file (str): The file path to the event manifest Excel file.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. **Load the Event Manifest**: Loads the event manifest data from the specified Excel file.
-    2. **Remove Test Events**: Filters out any rows where 'EventName' contains variations of the word "test" (case-insensitive).
-    3. **Fix Dates**: Converts the 'EventDate' column to a simple date format.
-    4. **Fill Missing Values**: Fills missing values in the columns 'EventGenre', 'EventClass', 'EventStatus', 'EventSubGenre', and 'EventVenue' with the placeholder 'None', and fills missing 'EventCapacity' values with 1.
-    5. **Sort the Data**: Sorts the DataFrame by 'EventDate', 'EventName', and 'EventInstance' in descending order.
-    6. **Logging and Execution Time**: Logs the shape of the DataFrame and records the execution time.
-
-Returns:
-    pd.DataFrame: The cleaned and processed DataFrame containing event data.
-"""
 def load_event_manifest(manifest_file, logger):
+    """Load event manifest from Excel; remove test events, standardize dates and defaults, sort by date."""
     start = perf_counter()
 
     # Load event manifest file and fix column names
@@ -73,44 +55,11 @@ def load_event_manifest(manifest_file, logger):
     # Sort dataframe
     event_df = event_df.sort_values(by=['EventDate', 'EventName', 'EventInstance'], ascending=False)
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Events loaded. Execution Time: {formatted_timing}')
+    logger.info(f'Events loaded. Execution Time: {_elapsed(start)}')
 
     return event_df
-"""
-Function: add_PnL_data
-
-Description:
-    This function merges event data with profit and loss (PnL) data from a QuickBooks export Excel file. 
-    It processes financial information such as public support, sponsorship, ticket sales, and expenses for events, 
-    calculating key financial ratios. The result is a cleaned and enriched event dataset that includes financial metrics. 
-    The processed data is saved to a specified CSV file.
-
-Parameters:
-    event_df (pd.DataFrame): A DataFrame containing event data with columns like 'EventId' and 'EventDate'.
-    Pnl_file (str): The file path to the Excel file containing PnL data.
-    PnLProcessed_file (str): The file path where the processed PnL data should be saved as a CSV.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. **Load and Rename PnL Columns**: Reads the PnL data from the Excel file and renames the columns to more readable names for easier processing.
-    2. **Merge PnL and Event Data**: Merges the PnL data with the event data on the 'EventId' column.
-    3. **Clean and Organize Data**:
-        - Drops unnecessary columns from the merged DataFrame.
-        - Groups by 'EventId' to keep only the first event name and prevent duplicates.
-    4. **Convert Numeric Data**: Converts columns related to financials to numeric types and fills missing or invalid values with 0.
-    5. **Calculate Financial Ratios**:
-        - Calculates the revenue-to-expense ratio and the percentage of ticket sales plan achieved.
-        - Ensures division errors (e.g., division by zero) are handled by replacing invalid values with 0.
-    6. **Save Processed Data**: Saves the processed data, including PnL and event metrics, to the specified CSV file.
-    7. **Logging and Execution Time**: Logs the process and records the execution time.
-
-Returns:
-    pd.DataFrame: The original event DataFrame (unmodified), though the processed PnL data is saved to the specified CSV file.
-"""
 def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
+    """Merge event data with QuickBooks P&L export, compute revenue/expense ratios, and write processed P&L to CSV."""
     start = perf_counter()
 
     PnL_df = pd.read_excel(Pnl_file,sheet_name='PnLSourceData')
@@ -194,34 +143,11 @@ def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
     # Save the processed data
     res_df.to_csv(PnLProcessed_file, index=False)
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'PnL data written to {PnLProcessed_file}. Execution Time: {formatted_timing}')
+    logger.info(f'PnL data written to {PnLProcessed_file}. Execution Time: {_elapsed(start)}')
 
     return event_df
-"""
-Function: load_sales_file
-
-Description:
-    This function loads and processes a raw sales data file. It renames columns from their original Salesforce naming conventions to more readable names, filters the data to retain only recent sales records (based on a specified number of years), and prepares the data for further analysis. The function also handles date conversion and logs the shape of the dataset before and after pruning older records.
-
-Parameters:
-    sales_file (str): The file path to the sales data CSV file.
-    yearsOfData (int): The number of years of data to retain. Rows older than this are pruned.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. **Load the Sales Data**: Reads the sales data from a CSV file using `pd.read_csv`, with `latin1` encoding and low memory optimization.
-    2. **Rename Columns**: Renames Salesforce-specific column names to more readable names for easier manipulation.
-    3. **Convert Dates**: Converts the 'CreatedDate' column to a proper datetime format.
-    4. **Prune Older Records**: Filters the DataFrame to retain only sales records within the last `yearsOfData` years.
-    5. **Logging**: Logs the initial and pruned size of the DataFrame, as well as the execution time.
-
-Returns:
-    pd.DataFrame: The processed DataFrame containing the sales data with renamed columns and only recent records.
-"""
 def load_sales_file(sales_file, yearsOfData, logger):
+    """Load Salesforce sales CSV, rename columns to readable names, and prune records older than yearsOfData years."""
     start = perf_counter()
 
     # load sales file and fix column names
@@ -288,43 +214,12 @@ def load_sales_file(sales_file, yearsOfData, logger):
     beginning_date = datetime.now() - timedelta(days=365*yearsOfData)
     sales_df = sales_df[sales_df['CreatedDate'] > beginning_date]
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Sales loaded. Execution Time: {formatted_timing}')
+    logger.info(f'Sales loaded. Execution Time: {_elapsed(start)}')
 
     logger.debug(sales_df.shape)
     return sales_df
-"""
-Function: sales_initial_prep
-
-Description:
-    This function performs initial preprocessing of the sales data, including cleaning up columns, 
-    filling missing values, and removing unnecessary or test records. It ensures that numeric and non-numeric columns 
-    have appropriate default values, formats dates, and prepares the DataFrame for further analysis.
-
-Parameters:
-    df (pd.DataFrame): A DataFrame containing sales data, with columns like 'TicketStatus', 'ItemPrice', 'EventDate_sales', 'AccountName', and more.
-    Account_file (str): The path to a CSV file containing account information, which can be used to merge Account IDs (this part is currently commented out).
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. **Remove Deleted Tickets**: Filters out records where 'TicketStatus' is marked as 'Deleted', which represent placeholders or canceled orders.
-    2. **Drop Redundant Columns**: Removes unnecessary columns from the sales data.
-    3. **Handle Missing Numeric Values**:
-        - Converts specific columns to numeric and fills missing values with default values (e.g., 0 for price and quantity).
-    4. **Handle Missing Non-Numeric Values**:
-        - Fills missing values for non-numeric columns (e.g., 'DonationName', 'DiscountCode') with placeholder values.
-    5. **Generate Account Names**:
-        - If 'AccountName' is missing, fills it with a generated value based on 'FirstName' and 'LastName'.
-    6. **Date Conversion**: Converts the 'EventDate_sales' column to a simple date format.
-    7. **Remove Test Events**: Filters out test events and instances based on their names.
-    8. **Logging and Execution Time**: Logs the initial shape of the DataFrame, changes made during processing, and the final shape, as well as the total execution time.
-
-Returns:
-    pd.DataFrame: The cleaned and preprocessed sales DataFrame, ready for further analysis.
-"""
 def sales_initial_prep(df, Account_file, logger):
+    """Remove deleted tickets, fill missing values, generate SHA-256 AccountIds, and drop test events."""
     start = perf_counter()
     logger.debug(df.shape)
     logger.debug(f'Sales pre-prep columns: {df.columns}')
@@ -397,51 +292,19 @@ def sales_initial_prep(df, Account_file, logger):
     logger.debug(df.head)
     logger.debug(df.shape)
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Initial sales prep complete. Execution Time: {formatted_timing}')
+    logger.info(f'Initial sales prep complete. Execution Time: {_elapsed(start)}')
 
     logger.debug(f'Sales post initial-prep columns: {df.columns}')
 
     return df
-"""
-Function: venue_and_attribute_processing
-
-Description:
-    This function processes venue and customer attributes in the sales DataFrame. 
-    It cleans up venue names, adds chorus membership information, and flags transactions with specific attributes 
-    such as chorus dues, student discounts, and subscriptions. The function also integrates an external chorus member 
-    list to identify chorus members and updates relevant customer attributes.
-
-Parameters:
-    sales_df (pd.DataFrame): A DataFrame containing sales data with columns like 'VenueName_sales', 'AccountName', 'DiscountCode', and 'TicketType'.
-    chorus_list_file (str): The file path to the CSV file containing the list of chorus members, which includes 'AccountName'.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. **Venue Cleaning**:
-        - Fills missing venue names with 'None'.
-        - Standardizes venue names by replacing all variations of "Mechanics" with "Mechanics Hall".
-
-    2. **Chorus Member Identification**:
-        - Loads the chorus member list and creates a set of unique 'AccountName' values from it.
-        - Adds a 'ChorusMember' column to the sales DataFrame by checking if the 'AccountName' exists in the chorus member list or has used a "Chorus Dues" discount code in any transaction.
-
-    3. **Flagging Specific Attributes**:
-        - Adds a 'DuesTxn' column to flag any transactions where the discount code contains "Chorus Dues".
-        - Updates the 'ChorusMember' column to include accounts that have used a "Chorus Dues" coupon.
-        - Adds a 'Student' column to flag transactions with a student discount based on 'TicketType'.
-        - Adds a 'Subscriber' column to flag transactions involving subscriptions, based on the event name containing "Subscription".
-
-    4. **Logging and Execution Time**:
-        - Logs the initial shape and column information, as well as changes made to the DataFrame during processing.
-        - Records the execution time for the entire process.
-
-Returns:
-    pd.DataFrame: The processed DataFrame with updated venue names and additional columns for customer attributes ('ChorusMember', 'DuesTxn', 'Student', 'Subscriber').
-"""
 def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logger):
+    """
+    Standardize venue names and add patron attribute flags.
+
+        Flags: ChorusMember (chorus list or Dues discount), DuesTxn, Student,
+        and Subscriber (current season computed dynamically). Board/corporator
+        status applied from board_file.
+    """
     start = perf_counter()
     logger.debug(f'Sales columns: {sales_df.columns}')
 
@@ -524,42 +387,9 @@ def venue_and_attribute_processing(sales_df, chorus_list_file, board_file, logge
 
     logger.debug(f'Venue and Attribute columns: {sales_df.columns}')
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Venue and attribute processing complete. Execution Time: {formatted_timing}')
+    logger.info(f'Venue and attribute processing complete. Execution Time: {_elapsed(start)}')
 
     return sales_df
-"""
-Function: genre_counts
-
-Description:
-    This function processes event data to create genre-specific event counts for each account. 
-    It filters events to include only 'Live' and 'Virtual' types, then calculates the number of unique events 
-    attended by each account in each genre. The resulting genre counts are merged back into the original DataFrame.
-
-Parameters:
-    df (pd.DataFrame): A DataFrame containing event and account data, including columns such as 'AccountId', 'EventGenre', 'EventId', and 'EventType'.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. **Data Filtering**:
-        - Fills missing values in the 'EventGenre' column with a placeholder ('None').
-        - Filters the DataFrame to include only 'Live' and 'Virtual' events, excluding subscriptions, test events, and other irrelevant event types.
-
-    2. **Unique Event Counting**:
-        - Removes duplicate events for each combination of 'AccountId' and 'EventGenre'.
-        - Uses a pivot table to count the number of unique events in each genre for each account ('AccountId').
-
-    3. **Merging Genre Data**:
-        - Merges the original DataFrame with the genre-specific event counts.
-
-    4. **Logging**:
-        - Logs the shape of the DataFrame before and after merging, and records the execution time of the processing steps.
-
-Returns:
-    pd.DataFrame: The processed DataFrame with additional columns for each genre, representing the count of events attended by each account.
-"""
 def event_counts(df, logger, event_column):
     """
     Generalized function to count occurrences of a specified event attribute (e.g., EventGenre, EventClass, EventVenue)
@@ -609,47 +439,11 @@ def event_counts(df, logger, event_column):
     logger.debug(f'Final columns after {event_column} merge: {merged_df.columns}')
 
     # Execution time calculation
-    elapsed_time = timedelta(seconds=perf_counter() - start)
-    logger.info(f'{event_column} counts complete. Execution Time: {elapsed_time.total_seconds():.2f} seconds')
+    logger.info(f'{event_column} counts complete. Execution Time: {_elapsed(start)}')
 
     return merged_df
-"""
-Function: state_and_city_processing
-
-Description:
-    This function standardizes and cleans the 'State' and 'City' fields in the sales DataFrame. It corrects common issues, 
-    such as ZIP codes incorrectly placed in the 'State' field, fixes common state and city name errors, 
-    and applies standardized formatting. Additionally, it ensures consistency in directional abbreviations (e.g., North to N) 
-    and corrects specific known errors in city and state names.
-
-Parameters:
-    sales_df (pd.DataFrame): A DataFrame containing sales data with columns like 'State', 'City', and 'ZIP'.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. **State Cleaning**:
-        - Extracts and separates ZIP codes accidentally placed in the 'State' field.
-        - Corrects common state typos, focusing mainly on 'MA' (Massachusetts).
-        - Replaces any "Mass" with "MA" for consistency.
-    
-    2. **City Cleaning**:
-        - Standardizes city names (e.g., title case, removes " MA" suffix, cleans punctuation).
-        - Applies state-specific city corrections using regex patterns to fix common misspellings and abbreviations.
-        - Replaces directional names (e.g., 'North' to 'N') and changes 'Centre' to 'Center'.
-
-    3. **ZIP Code Alignment**:
-        - Ensures that ZIP codes found in the 'State' field are corrected and moved to the correct column.
-
-    4. **City-State Mapping**:
-        - For certain cities known to belong to specific states (e.g., 'Worcester' belongs to 'MA'), it fills in missing state data based on city name.
-
-    5. **Execution Time Logging**:
-        - Logs the initial and final shape of the DataFrame and records the execution time of the processing steps.
-
-Returns:
-    pd.DataFrame: The processed DataFrame with cleaned and standardized 'State' and 'City' fields.
-"""
 def state_and_city_processing(sales_df, logger):
+    """Standardize State and City fields: extract ZIPs misplaced in State, fix typos and abbreviations via regex."""
     start = perf_counter()
 
     logger.debug(f'State & City input columns: {sales_df.shape}')
@@ -831,43 +625,11 @@ def state_and_city_processing(sales_df, logger):
     logger.debug('MA cities with null state')
     logger.debug(sales_df.shape)
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'State and city processing complete. Execution Time: {formatted_timing}')
+    logger.info(f'State and city processing complete. Execution Time: {_elapsed(start)}')
 
     return sales_df
-"""
-Function: address_and_ZIP_processing
-
-Description:
-    This function standardizes and cleans the address and ZIP code fields in the sales DataFrame. 
-    It formats addresses with title casing, applies abbreviation replacements for street types (e.g., 'Road' to 'Rd'), 
-    and removes unwanted punctuation. Additionally, it corrects and cleans ZIP codes, ensuring proper formatting 
-    (e.g., handling ZIP+4 codes and fixing incorrect or partial ZIP codes based on predefined mappings).
-
-Parameters:
-    sales_df (pd.DataFrame): A DataFrame containing sales data, with columns such as 'Address', 'City', and 'ZIP'.
-    logger (logging.Logger): A logger object for logging the processing details and execution time.
-
-Process:
-    1. **Address Cleaning**:
-        - Converts addresses to title case.
-        - Applies replacements for common street abbreviations (e.g., 'Road' to 'Rd').
-        - Removes unwanted punctuation (e.g., periods and commas) from addresses.
-        - Normalizes PO Box abbreviations to uppercase.
-    
-    2. **ZIP Code Processing**:
-        - Extracts the first five digits of ZIP codes and ensures they are zero-padded to five digits.
-        - Cleans incorrect or invalid ZIP codes based on predefined mappings for specific cities.
-    
-    3. **Execution Time Logging**:
-        - Logs the initial and final shape of the DataFrame and records the execution time of the processing steps.
-
-Returns:
-    pd.DataFrame: The processed DataFrame with cleaned and standardized 'Address' and 'ZIP' fields.
-"""
 def address_and_ZIP_processing(sales_df, logger):
+    """Convert addresses to title case, abbreviate street types, and pad/correct ZIP codes based on city mappings."""
     start = perf_counter()
     logger.debug(sales_df.shape)
 
@@ -917,40 +679,13 @@ def address_and_ZIP_processing(sales_df, logger):
     # Apply the clean_zip_codes function to the sales_df DataFrame
     sales_df = clean_zip_codes(sales_df, 'ZIP')
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'address & ZIP processing complete. Execution Time: {formatted_timing}')
+    logger.info(f'address & ZIP processing complete. Execution Time: {_elapsed(start)}')
 
     logger.debug(sales_df.shape)
 
     return sales_df
-"""
-Function: combine_sales_and_events
-
-Description:
-    This function merges sales data with event data based on matching 'EventId' and 'InstanceId' fields from both data sources. 
-    It also identifies and logs any sales records that do not have corresponding event instances. 
-    The result is a combined dataset of sales and event information, sorted in reverse chronological order by event date.
-
-Parameters:
-    sales_df (pd.DataFrame): A DataFrame containing sales data, with columns like 'EventId_sales', 'InstanceId_sales', and 'EventDate_sales'.
-    event_df (pd.DataFrame): A DataFrame containing event data, with columns like 'EventId', 'InstanceId', and event details.
-    logger (logging.Logger): A logger object for logging execution details and debug information.
-
-Process:
-    1. Logs the initial shape of both sales and event data.
-    2. Merges the two datasets based on 'EventId' and 'InstanceId' using a left join, keeping all sales records.
-    3. Logs the columns and shape of the merged dataset.
-    4. Identifies any sales records that do not have matching event instances in the event data and logs these missing records.
-    5. Saves the missing event instances to a CSV file ('missing_events.csv').
-    6. Sorts the merged dataset in reverse chronological order by 'EventDate_sales'.
-    7. Logs the final shape of the merged dataset and the total execution time.
-
-Returns:
-    pd.DataFrame: The merged DataFrame containing combined sales and event data, sorted by 'EventDate_sales'.
-"""
 def combine_sales_and_events(sales_df, event_df, logger):
+    """Merge sales and event data on EventId/InstanceId (left join), log unmatched records, sort by event date."""
     start = perf_counter()
 
     logger.debug('Sales + Events:')
@@ -985,45 +720,14 @@ def combine_sales_and_events(sales_df, event_df, logger):
 
     logger.debug('Subscriber totals after event merge: %s', se_df["Subscriber"].value_counts())
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Sales and events merging. Execution Time: {formatted_timing}')
+    logger.info(f'Sales and events merging. Execution Time: {_elapsed(start)}')
 
     return se_df
-"""
-Function: final_processing_and_output
-
-Description:
-    This function performs the final processing and aggregation of sales and event data, calculating relevant metrics 
-    like ticket totals and donation adjustments, and outputs the results to a CSV file. The function aggregates records 
-    at the most granular level and optionally processes donations by handling subscription-related adjustments.
-
-Parameters:
-    df (pd.DataFrame): The DataFrame containing the processed sales and event data.
-    output_file (str): The file path where the final processed data will be saved as a CSV file.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-    processDonations (bool): A flag indicating whether to adjust donation amounts based on subscriptions.
-
-Process:
-    1. **Event Type Cleanup**: Standardizes event type capitalization by converting strings to title case.
-    2. **Data Aggregation**: 
-        - Groups data by specific columns (like 'OrderNumber', 'EventName', 'EventInstance') and applies aggregation 
-            functions (e.g., sum for quantities, max for prices).
-        - Dynamically adds additional columns for aggregation by keeping the latest record where necessary.
-    3. **Total Calculations**: Calculates ticket totals by multiplying item price by quantity.
-    4. **Optional Donation Processing**: 
-        - Adjusts donation amounts for orders containing subscriptions by setting donations to 0 for non-subscription items
-            in the same order.
-    5. **Final Cleanup**: Strips down the DataFrame to a final set of output columns and writes the results to a CSV file.
-
-Returns:
-    pd.DataFrame: The processed DataFrame containing aggregated and cleaned sales and event data.
-
-Exceptions:
-    - Handles any errors by logging debug information during processing.
-"""
 def final_processing_and_output(df, output_file, logger, processDonations):
+    """
+    Aggregate sales by order/event/ticket type, optionally adjust subscription
+        donation amounts, and write full and anonymized output CSVs.
+    """
     start = perf_counter()
 
     # Clean up Event Types:
@@ -1143,16 +847,14 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     anon_df.to_csv('anon_' + output_file, index=False)
     logger.debug(f'PII safe Output written. {anon_df.columns}')
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Final sales results written to file: {output_file}. Execution Time: {formatted_timing}')
+    logger.info(f'Final sales results written to file: {output_file}. Execution Time: {_elapsed(start)}')
 
     logger.debug(f'final processing return df columns:{df.columns}')
 
     return df # the full data frame is needed for Patron details
 
 def add_regions(df, regions_file, logger):
+    """Assign geographic region labels by merging on ZIP code from the regions reference file."""
     start = perf_counter()
 
     # Load the regions file with appropriate data types
@@ -1183,28 +885,24 @@ def add_regions(df, regions_file, logger):
     logger.debug(f'Regions post merge: {dr_df.shape}')
     logger.debug(f'Results with regions {dr_df.columns}')
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Region Processing complete. Execution Time: {formatted_timing}')
+    logger.info(f'Region Processing complete. Execution Time: {_elapsed(start)}')
 
     return dr_df
 
 
 def load_anonymized_dataset(anon_data_file, logger):
+    """Load anonymized sales/patron dataset from CSV."""
     start = perf_counter()
 
     # Load event manifest file and fix column names
     event_df = pd.read_csv(anon_data_file, low_memory=False)
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Anon Dataset loaded. Execution Time: {formatted_timing}')
+    logger.info(f'Anon Dataset loaded. Execution Time: {_elapsed(start)}')
 
     return event_df
 
 def add_key_events(df, logger):
+    """For each AccountId extract first, second, penultimate, and latest event names and dates."""
     from datetime import timedelta
     from timeit import default_timer as timer
     import numpy as np
@@ -1262,43 +960,14 @@ def add_key_events(df, logger):
     # Log final dataframe sample
 
     # Log execution time
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Key events added: Execution Time: {formatted_timing}')
+    logger.info(f'Key events added: Execution Time: {_elapsed(start)}')
 
     return key_events
 
 
 
-"""
-Function: add_bulk_buyers
-
-Description:
-    This function identifies and flags "bulk buyers" and "frequent bulk buyers" based on the number of tickets purchased for events. 
-    It adds two new columns, 'BulkBuyer' and 'FrequentBulkBuyer', to the DataFrame, indicating accounts that have made large purchases and accounts that frequently make large purchases across multiple events.
-
-Parameters:
-    df (pd.DataFrame): A DataFrame containing event data, including columns like 'AccountId', 'EventName', and 'Quantity'.
-    logger (logging.Logger): A logger object for logging debug information and execution time.
-
-Process:
-    1. Defines thresholds:
-        - `bulk_threshold`: The minimum number of tickets purchased in a single event to qualify as a bulk purchase.
-        - `event_count_threshold`: The minimum number of events with bulk purchases required to qualify as a frequent bulk buyer.
-    2. Groups the data by 'AccountId' and 'EventName', summing the quantities of tickets purchased.
-    3. Identifies accounts that purchased more than the bulk threshold of tickets for any event.
-    4. Adds a 'BulkBuyer' column to flag accounts that made bulk purchases.
-    5. Counts the number of events where each account made bulk purchases.
-    6. Adds a 'FrequentBulkBuyer' column to flag accounts that made bulk purchases in more than the event count threshold of events.
-    7. Logs the list of frequent bulk buyers and the execution time.
-
-Returns:
-    pd.DataFrame: The updated DataFrame with two new columns:
-        - 'BulkBuyer': A boolean flag indicating if the account made any bulk purchases.
-        - 'FrequentBulkBuyer': A boolean flag indicating if the account made bulk purchases in more than the specified number of events.
-"""
 def add_bulk_buyers(df, logger):
+    """Flag BulkBuyer (>=12 tickets/event) and FrequentBulkBuyer (bulk purchases at >=4 events) accounts."""
     start = perf_counter()
 
     bulk_threshold = 12
@@ -1324,49 +993,9 @@ def add_bulk_buyers(df, logger):
 
     logger.debug(f'Frequent Bulk buyers list: {frequent_bulk_buyers}')
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Bulk Buyers added: Execution Time: {formatted_timing}')
+    logger.info(f'Bulk Buyers added: Execution Time: {_elapsed(start)}')
 
     return df
-"""
-Function: get_patron_details
-
-Description:
-    This function processes event and patron data to calculate RFM scores, identify key events, 
-    assess bulk buying behavior, and update geographical details like latitude and longitude 
-    based on address information. It also handles data cleaning, such as fixing city/state inconsistencies 
-    and merging with pre-existing patron data. The processed data is then saved, and patrons without 
-    latitude/longitude details are identified.
-
-Parameters:
-    df (pd.DataFrame): A DataFrame containing event and transaction data, with columns like 'EventDate', 
-        'AccountId', 'EventName', 'Quantity', and 'ItemPrice'.
-    RFMScoreThreshold (int): The threshold above which a patron's RFM score is considered for geolocation updates.
-    GetLatLong (bool): A flag indicating whether to update latitude, longitude, and ZIP+4 for missing values.
-    regions_file (str): Path to the file containing region mapping data.
-    patrons_file (str): Path to the file containing existing patron details (latitude, longitude, ZIP+4, etc.).
-    patron_temp_file (str): Path to a temporary file for saving the output in case of file permission issues.
-    new_threshold (int): Threshold for identifying new patrons based on their first event date.
-    reengaged_threshold (int): Threshold for identifying returning patrons based on their event attendance gaps.
-    logger (logging.Logger): A logger object for logging debug information, execution progress, and results.
-
-Process:
-    1. **Data Preprocessing**: Filters events to include only relevant types (Live and completed/future events), 
-        removes deleted transactions, and assigns missing account names to 'Walk Up Sales'.
-    2. **Add Key Events**: Identifies the first, latest, and penultimate events for each account.
-    3. **Bulk Buyers**: Identifies and flags bulk buyers and frequent bulk buyers based on ticket quantity.
-    4. **Genre Scores**: Calculates genre preference scores for each patron based on event participation.
-    5. **RFM Calculation**: Computes Recency, Frequency, and Monetary scores for each patron and assigns segments based on thresholds.
-    6. **Address and ZIP Fixing**: Cleans city, state, address, and ZIP information to ensure consistency.
-    7. **Geocode Information**: Updates missing latitude and longitude data for patrons based on their addresses, if enabled.
-    8. **Region Assignment**: Maps patrons to geographical regions using the provided region file.
-    9. **Saving Results**: Saves the final processed data to a specified output file or a temporary file in case of permission issues.
-
-Returns:
-    None: The function processes and saves data to the specified files, logging execution details and errors along the way.
-"""
 def get_patron_details(df,
                        rates_df,
                        RFMScoreThreshold,
@@ -1377,6 +1006,11 @@ def get_patron_details(df,
                        new_threshold,
                        reengaged_threshold,
                        logger):
+    """
+    Orchestrate the full patron detail pipeline: filter transactions, calculate
+        event preference scores (genre/class/venue), compute RFM/regularity metrics,
+        assign segments, geocode addresses, and write full and anonymized patron CSVs.
+    """
 
     try:
         # Preprocess the data
@@ -1594,9 +1228,6 @@ def get_patron_details(df,
                 #logger.info('Get ZIP+4...')
                 #df = df.apply(update_zip_plus4_info, args=(RFMScoreThreshold,), axis=1)
 
-                end = perf_counter()
-                timing = timedelta(seconds=(end - start))
-                formatted_timing = "{:.2f}".format(timing.total_seconds())
 
             else:
                 logger.info('Bypassing Lat/Long and ZIP+4...')
@@ -1724,33 +1355,18 @@ def get_patron_details(df,
 
 # General functions
 def safe_divide(x, y):
+    """Element-wise division that replaces inf and NaN results with 0."""
     with np.errstate(divide='ignore', invalid='ignore'):
         result = np.divide(x, y)
         result[~np.isfinite(result)] = 0  # Set NaN, inf, -inf to 0
     return result
-"""
-Function: generate_identifier
-
-Description:
-    This function generates a unique identifier for a given account name by applying the SHA-256 hash function. 
-    The result is a secure, consistent, and unique string (hash) that can be used as an anonymous identifier for each account.
-
-Parameters:
-    account_name (str): The account name (string) for which the unique identifier will be generated.
-
-Process:
-    1. Encodes the account name into bytes.
-    2. Applies the SHA-256 hash function to the encoded account name.
-    3. Returns the resulting hash as a hexadecimal string.
-
-Returns:
-    str: A unique SHA-256 hash string for the provided account name.
-"""
 
 def generate_identifier(account_name):
+    """Return a stable SHA-256 hex digest of account_name for use as an anonymized AccountId."""
     # Use SHA-256 hash function
     return hashlib.sha256(account_name.encode()).hexdigest()
 def plot_RFM(df, logger):
+    """3-D scatter plot of Recency, Frequency, and Monetary values."""
     fig = plt.figure(figsize=(20, 20))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -1764,6 +1380,7 @@ def plot_RFM(df, logger):
     ax.set_ylabel('Frequency')
     ax.set_zlabel('Monetary')
 def plot_3D_scatter(xs,x_label, ys, y_label,zs, z_label, logger):
+    """Generic 3-D scatter plot with configurable axis labels."""
     fig = plt.figure(figsize=(20, 20))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -1773,32 +1390,15 @@ def plot_3D_scatter(xs,x_label, ys, y_label,zs, z_label, logger):
     ax.set_ylabel(y_label)
     ax.set_zlabel(z_label)
 def plot_2D_scatter(x,x_label, y, y_label, logger):
+    """2-D scatter plot with configurable axis labels and a descriptive title."""
     plt.figure(figsize=(20, 20))
     plt.scatter(x, y)
     plt.xlabel(x_label)
     plt.ylabel(y_label)
     plt.title(f'Distribution of {x_label} and {y_label}')
     plt.show()
-    """
-Function: get_geocode_info
-
-Description:
-    This function retrieves geocoding information (latitude and longitude) for a given address by making a request to the Google Geocoding API.
-
-Parameters:
-    address (str): A string containing the full address to be geocoded.
-
-Process:
-    1. Constructs the request URL using the Google Geocoding API and the provided address.
-    2. Sends a GET request to the API and checks the response for a valid status.
-    3. Parses the API response to extract the latitude and longitude of the address, if available.
-    4. Handles errors such as request issues (HTTP errors), invalid JSON responses, or missing keys.
-
-Returns:
-    dict: A dictionary containing the latitude ('lat') and longitude ('lng') if the address is successfully geocoded.
-    None: If there is an error or no geocoding result is found.
-"""
 def get_geocode_info(address):
+    """Call Google Geocoding API for address; return location dict or None on failure."""
 
     google_api_key = 'AIzaSyAC4jkZD-p7bkor1InDTyw2Q2ULXK23yLw'
     base_url = 'https://maps.googleapis.com/maps/api/geocode/json'
@@ -1823,27 +1423,8 @@ def get_geocode_info(address):
     except KeyError as e:
         print(f"Key error: {str(e)}")
         return None
-"""
-Function: update_geocode_info
-
-Description:
-    This function checks whether geocoding information (latitude and longitude) is missing for a record and attempts to update it using the Google Geocoding API, provided that the RFM score exceeds a threshold and the address is valid.
-
-Parameters:
-    df (pd.Series): A row of customer data, including 'RFMScore', 'Latitude', 'Longitude', 'Address', 'City', 'State', and 'ZIP'.
-    RFMScoreThreshold (int): The minimum RFM score required for an account to trigger geocode lookup.
-    logger (logging.Logger): A logger object for logging debug or information messages.
-
-Process:
-    1. Checks if the RFM score exceeds the given threshold and if latitude and longitude are missing.
-    2. Validates that the address components (address, city, state, ZIP) are not null.
-    3. Calls the `get_geocode_info()` function to retrieve latitude and longitude based on the full address.
-    4. If geocoding is successful, updates the DataFrame with the obtained latitude and longitude values.
-
-Returns:
-    pd.Series: The updated row with new latitude and longitude if geocoding was successful.
-"""
 def update_geocode_info(df, RFMScoreThreshold, logger):
+    """Update lat/long for records above RFMScoreThreshold that are missing geo coordinates."""
     # Check if the latitude and longitude exist and if conditions are met
     if df['RFMScore'] > RFMScoreThreshold and pd.isnull(df['Latitude']) and pd.isnull(df['Longitude']):
         # Additional checks for valid Address, City, State, and ZIP
@@ -1857,6 +1438,7 @@ def update_geocode_info(df, RFMScoreThreshold, logger):
 
     return df
 def get_zip_plus4(street, city, state, zipcode):
+    """Call USPS API to retrieve the ZIP+4 extension for a given address."""
     base_url = 'http://production.shippingapis.com/ShippingAPI.dll'
     params = {
         'API': 'ZipCodeLookup',
@@ -1875,6 +1457,7 @@ def get_zip_plus4(street, city, state, zipcode):
             return zip4_element.text
     return None
 def update_zip_plus4_info(df, RFMScoreThreshold):
+    """Add ZIP+4 extension for records above RFMScoreThreshold that are missing it."""
     # Check if ZIP+4 exists and if conditions are met
     if df['RFMScore'] > RFMScoreThreshold and pd.isnull(df['ZIP+4']):
         # Call get_zip_plus4

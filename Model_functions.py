@@ -23,16 +23,19 @@ import pandas as pd
 from scipy.stats import entropy
 from sklearn.linear_model import LinearRegression
 
+def _elapsed(start):
+    """Return elapsed seconds since `start` as a '%.2f' string."""
+    return f'{timedelta(seconds=perf_counter() - start).total_seconds():.2f}'
+
+
 def load_anonymized_dataset(anon_data_file, logger):
+    """Load anonymized patron dataset from CSV."""
     start = perf_counter()
 
     # Load event manifest file and fix column names
     event_df = pd.read_csv(anon_data_file)
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    formatted_timing = "{:.2f}".format(timing.total_seconds())
-    logger.info(f'Anon Dataset loaded. Execution Time: {formatted_timing}')
+    logger.info(f'Anon Dataset loaded. Execution Time: {_elapsed(start)}')
 
     return event_df
 
@@ -74,13 +77,16 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
                 last_kept_idx = i
         return g.loc[keep]
 
+    t = perf_counter()
     df = (
         df.groupby(['AccountId', event_column], group_keys=False)
         .apply(lambda g: _collapse_group(g, burst_days))
         .reset_index(drop=True)
     )
+    logger.debug(f'{event_column}: burst collapse. Execution Time: {_elapsed(t)}')
 
     # Unique events after burst collapse
+    t = perf_counter()
     unique_events_df = df.drop_duplicates(subset=['AccountId', 'EventDate', event_column])
 
     # Global frequencies (post-burst)
@@ -108,8 +114,10 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
         event_counts['NormalizedCount'] / event_counts['TotalNormalized'],
         0.0
     )
+    logger.debug(f'{event_column}: aggregation & normalization. Execution Time: {_elapsed(t)}')
 
     # Wide pivot
+    t = perf_counter()
     event_df = (
         event_counts.pivot(index='AccountId', columns=event_column, values='NormalizedPercentage')
         .fillna(0)
@@ -119,8 +127,10 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
     # Frequency = distinct EventName per account (post-burst)
     freq_series = unique_events_df.groupby('AccountId')['EventName'].nunique()
     event_df['Frequency'] = event_df['AccountId'].map(freq_series).fillna(0).astype(int)
+    logger.debug(f'{event_column}: pivot & frequency. Execution Time: {_elapsed(t)}')
 
-    # Entropy
+    # Entropy & scoring
+    t = perf_counter()
     def calculate_entropy(row):
         proportions = row[row > 0]
         return entropy(proportions) if len(proportions) else 0.0
@@ -136,7 +146,6 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
         event_df.drop(columns=['AccountId', 'Entropy', 'RawPreferenceStrength', 'Frequency']).idxmax(axis=1)
     )
 
-    # ✅ FIXED: add suffix with proper comprehension
     event_df.columns = [
         (col + 'Score' if col not in ['AccountId', preferred_col, 'Entropy', 'RawPreferenceStrength', 'Frequency'] else col)
         for col in event_df.columns
@@ -167,7 +176,6 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
         event_df['PreferenceConfidence'] > 45,
         event_df['Frequency'] <= 3,
         ]
-    #choices = ['Omnivore', 'Focused', 'Favors', 'Mixed', 'Unclear']
     choices = ['Omnivore', 'Strong','Favors', 'Mixed','too few']
 
     event_df['Strength'] = np.select(conditions, choices, default='Unclear')
@@ -181,41 +189,10 @@ def calculate_event_scores(df, logger, event_column, venue_threshold=6, burst_da
         'EventCountWeighting': f'{event_column}EventCountWeighting',
         'PreferenceConfidence': f'{event_column}PreferenceConfidence'
     })
+    logger.debug(f'{event_column}: entropy & scoring. Execution Time: {_elapsed(t)}')
 
-    try:
-        logger.debug(f"{event_column}: Applied {burst_days}-day burst collapse (per Account x Category).")
-    except Exception:
-        pass
-
+    logger.info(f'{event_column} Scores complete. Execution Time: {_elapsed(start)}')
     return event_df
-"""
-Function: calculate_growth_score
-
-Description:
-    This function calculates a growth score for a given account based on the relationship between fiscal years and monetary 
-    values (spending) using linear regression. The growth score is derived from the slope of the regression line, which 
-    represents how the account's spending changes over time. A positive slope indicates increasing spending, while a 
-    negative slope suggests a decline in spending.
-
-Parameters:
-    df (pd.DataFrame): A DataFrame containing the following columns:
-        - 'FiscalYear': The fiscal year in which the spending occurred.
-        - 'Monetary': The total monetary value (spending) for each fiscal year.
-
-Process:
-    1. **Data Preparation**: The function reshapes the 'FiscalYear' column to be used as the predictor (X) and the 'Monetary' 
-       column as the response (y) for linear regression.
-    2. **Linear Regression**: Fits a linear regression model to the fiscal year and monetary data, using fiscal years to 
-       predict spending patterns over time.
-    3. **Growth Score Calculation**: The slope of the regression line (regression coefficient) is used as the growth score. 
-       This score indicates the rate of change in monetary value over time (positive for growth, negative for decline).
-    4. **Handling Edge Cases**: If there is only one fiscal year (i.e., no variation in fiscal years), the growth score is 
-       set to 0, as no trend can be established.
-
-Returns:
-    float: The growth score, which is the slope of the linear regression line. A positive value indicates increasing 
-           spending over time, while a negative value indicates decreasing spending.
-"""
 
 def calculate_growth_score(df, current_year):
     """
@@ -334,48 +311,13 @@ def calculate_regularity(df, logger=None):
     return df
 
 
-"""
-Function: calculate_rfm
-
-Description:
-    This function calculates Recency, Frequency, and Monetary (RFM) scores for customer accounts, based on their event participation 
-    and purchasing behavior. In addition to the traditional RFM metrics, the function computes several related metrics, such as days 
-    since the first, latest, and penultimate events, account lifespan, and growth score (derived from monetary spending trends over time). 
-    It also incorporates the Average Yearly Monetary spend (AYM) and additional custom attributes like subscriber status and other 
-    categorical features for deeper segmentation. Z-scores for key metrics are also calculated, allowing for a more normalized view of 
-    customer behavior. 
-
-Parameters:
-    df (pd.DataFrame): A DataFrame containing customer event and purchase data. Key columns include:
-        - 'AccountId': Unique identifier for each customer.
-        - 'LatestEventDate', 'FirstEventDate', 'PenultimateEventDate': Dates of customer events.
-        - 'EventName': The name of attended events, used for frequency calculation.
-        - 'Quantity' and 'ItemPrice': Used to calculate the monetary value of purchases.
-        - Additional categorical columns such as 'Subscriber', 'ChorusMember', etc.
-    logger (logging.Logger): A logger object for logging execution details, debugging information, and completion time.
-
-Process:
-    1. **Recency Calculation**: Calculates days since the latest, first, and penultimate events. Handles future dates (recency set to 0) and NaN values.
-    2. **Lifespan Calculation**: Computes the customer’s lifespan based on the difference between the first and latest event dates.
-    3. **Frequency Calculation**: Determines the frequency of distinct events attended by each account.
-    4. **Monetary Calculation**: Computes the monetary value as the product of quantity and item price, aggregated across fiscal years.
-    5. **Fiscal Year Handling**: Defines a fiscal year (ending June 30) and groups monetary values by this period. A Cartesian join ensures zero spending years are accounted for.
-    6. **Growth Score**: Uses a linear regression model to calculate growth in monetary spending over fiscal years, providing insight into spending trends.
-    7. **Average Yearly Monetary (AYM)**: Computes the average yearly monetary spend for each account based on their transaction history.
-    8. **Additional Metrics**: Includes custom features such as subscriber status, chorus membership, and dues transactions for more granular segmentation.
-    9. **Z-Score Calculation**: Computes z-scores for Recency, Frequency, Monetary, GrowthScore, and AYM to normalize the metrics across customers.
-    10. **Scoring**: Segments Recency, Frequency, and Monetary into predefined score bins (0 to 5). Total RFM score is calculated by summing these individual scores.
-    11. **Handling NaN and Edge Cases**: Accounts for NaN values in monetary, event, and other fields, ensuring proper handling of customers who predate available sales history.
-    12. **Logging**: Logs the final DataFrame shape and execution time.
-
-Returns:
-    pd.DataFrame: A DataFrame containing calculated RFM scores, z-scores, growth score, AYM, and other customer-level metrics. 
-                  Key output columns include:
-        - 'RecencyScore', 'FrequencyScore', 'MonetaryScore', 'RFMScore'
-        - 'GrowthScore', 'AYM', 'RecencyZ', 'FrequencyZ', 'MonetaryZ', 'GrowthZ', 'AYMZ'
-        - Additional categorical fields such as 'Subscriber', 'ChorusMember', etc.
-"""
 def calculate_patron_metrics(df, logger):
+    """
+    Calculate per-patron RFM metrics, lifespan, growth score, AYM, and regularity.
+
+        Recency, Frequency, and Monetary are each binned 0-5 and summed into RFMScore.
+        Also computes DaysToReturn, DaysFromPenultimateEvent, ClusterFrequency, and Engagement.
+    """
     from datetime import datetime, timedelta
     import numpy as np
     import pandas as pd
@@ -557,49 +499,17 @@ def calculate_patron_metrics(df, logger):
 
     metrics_df['RFMScore'] = metrics_df['RecencyScore'] + metrics_df['FrequencyScore'] + metrics_df['MonetaryScore']
 
-    end = perf_counter()
-    timing = timedelta(seconds=(end - start))
-    logger.info(f'Patron metrics complete. Execution Time: {timing}')
+    logger.info(f'Patron metrics complete. Execution Time: {_elapsed(start)}')
 
     return metrics_df
 
-"""
-Function: assign_segment
-
-Description:
-    This function assigns a customer to a specific segment based on their Recency, Frequency, and Monetary (RFM) scores, 
-    along with other behavioral and engagement metrics. The segmentation helps in targeting customers for marketing, 
-    retention, and engagement strategies by categorizing them into distinct groups such as 'New', 'Returning', 'Best', 
-    'Upsell', 'Slipping', and others.
-
-Parameters:
-    df (pd.Series): A row of customer data containing relevant columns such as:
-        - 'RecencyScore': Score indicating how recently the customer engaged.
-        - 'FrequencyScore': Score based on the frequency of customer engagement.
-        - 'MonetaryScore': Score representing the monetary value of customer purchases.
-        - 'Subscriber': Boolean indicating if the customer is a subscriber.
-        - 'DaysFromFirstEvent': Days since the customer's first event.
-        - 'DaysFromPenultimateEvent': Days since the customer's second-most recent event.
-        - Additional columns like 'FrequentBulkBuyer', 'ChorusMember', etc.
-    new_threshold (int): Maximum number of days from the first event to qualify the customer as "New".
-    reengaged_threshold (int): Maximum number of days since the penultimate event to qualify the customer as "Returning".
-
-Process:
-    1. **Initial Group Exclusion**: First, the function categorizes customers into specific groups that override other segmentations:
-        - 'Comp': If the monetary score is 0, indicating no purchase activity.
-        - 'Group Buyer': If the customer frequently buys in bulk (e.g., for groups).
-        - 'New': If the customer’s first event was recent, based on the new_threshold.
-        - 'Returning': If the customer attended an event recently, but with a long gap since their previous event.
-        - 'Best': If the customer has the highest possible RFM score (15).
-
-    2. **High Engagement Check**: If not excluded in the first step, the function checks for customers with high engagement:
-        - 'Potential Chorus Subscriber': If the customer is highly engaged but not a subscriber, and is a chorus member.
-        - 'Potential Subscriber': If the customer has a high recency score but is not currently a subscriber.
-        - 'High': Customers with frequent and recent engagement (high recency and frequency scores).
-
-    3. **Segment by Recency and Frequency**: If high engagement is
-"""
 def assign_segment(df, new_threshold, reengaged_threshold):
+    """
+    Assign a patron segment label based on RFM scores and behavioral thresholds.
+
+        Possible labels: Best, Comp, Group Buyer, New, Re-engaged, High, Upsell,
+        Come Again, Slipping, Reminder, One&Done, Lapsed, Others.
+    """
     # Initial checks for specific groups
     if df['MonetaryScore'] == 0:
         return 'Comp'
@@ -636,12 +546,14 @@ def assign_segment(df, new_threshold, reengaged_threshold):
 
 # General functions
 def safe_divide(x, y):
+    """Element-wise division that replaces inf and NaN results with 0."""
     with np.errstate(divide='ignore', invalid='ignore'):
         result = np.divide(x, y)
         result[~np.isfinite(result)] = 0  # Set NaN, inf, -inf to 0
     return result
 
 def plot_RFM(df, logger):
+    """3-D scatter plot of Recency, Frequency, and Monetary values."""
     fig = plt.figure(figsize=(20, 20))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -655,6 +567,7 @@ def plot_RFM(df, logger):
     ax.set_ylabel('Frequency')
     ax.set_zlabel('Monetary')
 def plot_3D_scatter(xs,x_label, ys, y_label,zs, z_label, logger):
+    """Generic 3-D scatter plot with configurable axis labels."""
     fig = plt.figure(figsize=(20, 20))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -664,6 +577,7 @@ def plot_3D_scatter(xs,x_label, ys, y_label,zs, z_label, logger):
     ax.set_ylabel(y_label)
     ax.set_zlabel(z_label)
 def plot_2D_scatter(x,x_label, y, y_label, logger):
+    """2-D scatter plot with configurable axis labels and a descriptive title."""
     plt.figure(figsize=(20, 20))
     plt.scatter(x, y)
     plt.xlabel(x_label)
