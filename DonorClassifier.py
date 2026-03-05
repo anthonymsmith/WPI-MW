@@ -57,18 +57,18 @@ SUMMARY_TOP_N          = 30   # Rows visible by default in summary; clear Rank f
 
 # Propensity score weights per tranche — (internal_column, weight) tuples, weights sum to 1.0
 # Tune here; see _propensity_score for normalization details
-T1_WEIGHTS = [('_UpgradeRatio',     0.25), ('Regularity',         0.22),
-              ('GrowthScore',        0.15), ('_DonationFreshness', 0.10),
-              ('_IsChorus',          0.10), ('_PatronRank',        0.10),
-              ('_SubscriberRank',    0.08)]
-T2_WEIGHTS = [('GrowthScore',        0.31), ('AYM',                0.22),
-              ('Regularity',         0.13), ('_DonationFreshness', 0.10),
-              ('_IsChorus',          0.10), ('_PatronRank',        0.10),
-              ('_SubscriberRank',    0.04)]
-T3_WEIGHTS = [('_DonationFreshness', 0.27), ('Regularity',         0.22),
-              ('_LogDonationCount',  0.13), ('RFMScore',           0.10),
-              ('_IsChorus',          0.10), ('_PatronRank',        0.10),
-              ('_SubscriberRank',    0.08)]
+T1_WEIGHTS = [('_UpgradeRatio',    0.25), ('Regularity',        0.22),
+              ('GrowthScore',       0.15), ('_DonorDueScore',    0.10),
+              ('_IsChorus',         0.10), ('_PatronRank',       0.10),
+              ('_SubscriberRank',   0.08)]
+T2_WEIGHTS = [('GrowthScore',       0.31), ('AYM',               0.22),
+              ('Regularity',        0.13), ('_DonorDueScore',    0.10),
+              ('_IsChorus',         0.10), ('_PatronRank',       0.10),
+              ('_SubscriberRank',   0.04)]
+T3_WEIGHTS = [('_DonorDueScore',    0.27), ('Regularity',        0.22),
+              ('_LogDonationCount', 0.13), ('RFMScore',          0.10),
+              ('_IsChorus',         0.10), ('_PatronRank',       0.10),
+              ('_SubscriberRank',   0.08)]
 T4_WEIGHTS = [('_DormantRecency',    0.27), ('RFMScore',           0.22),
               ('AverageDonation',    0.13), ('Regularity',         0.10),
               ('_IsChorus',          0.10), ('_PatronRank',        0.10),
@@ -130,6 +130,32 @@ donor_summary = (
     )
 )
 logger.info('%s unique donor accounts', f'{len(donor_summary):,}')
+
+# ---------------------------------------------------------------------------
+# Detect giving season per donor from individual gift dates
+# Staggered: Fall = Aug–Jan (endpoint Jan 31), Spring = Feb–Jul (endpoint Jul 31)
+# Handles Dec gifts recorded in January and June gifts recorded in July.
+# ---------------------------------------------------------------------------
+_FALL_MONTHS = {8, 9, 10, 11, 12, 1}
+donor_df['_season'] = donor_df['Close Date'].dt.month.apply(
+    lambda m: 'Fall' if m in _FALL_MONTHS else 'Spring'
+)
+_season_counts = (
+    donor_df.groupby(['Account Name', '_season']).size()
+    .unstack(fill_value=0)
+    .reindex(columns=['Fall', 'Spring'], fill_value=0)
+)
+_season_counts['GivingSeason'] = 'Mixed'
+_season_counts.loc[_season_counts['Fall'] > _season_counts['Spring'] * 1.5, 'GivingSeason'] = 'Fall'
+_season_counts.loc[_season_counts['Spring'] > _season_counts['Fall'] * 1.5, 'GivingSeason'] = 'Spring'
+donor_summary = donor_summary.merge(
+    _season_counts[['GivingSeason']].reset_index(), on='Account Name', how='left'
+)
+donor_summary['GivingSeason'] = donor_summary['GivingSeason'].fillna('Mixed')
+logger.info('Giving seasons — Fall: %s  Spring: %s  Mixed: %s',
+            (donor_summary['GivingSeason'] == 'Fall').sum(),
+            (donor_summary['GivingSeason'] == 'Spring').sum(),
+            (donor_summary['GivingSeason'] == 'Mixed').sum())
 
 # ---------------------------------------------------------------------------
 # Identify donor accounts with no matching patron record
@@ -243,6 +269,53 @@ _patron_rank = {'officer': 4, 'board': 3, 'ex-board': 2, 'corporator': 1, 'patro
 df['_PatronRank']        = df['PatronStatus'].map(_patron_rank).fillna(0).astype(float)
 _subscriber_rank = {'current': 2, 'previous': 1, 'never': 0}
 df['_SubscriberRank']    = df['Subscriber'].map(_subscriber_rank).fillna(0).astype(float)
+
+# Seasonal due score — replaces _DonationFreshness for active donor tranches
+# Staggered season endpoints: Fall = Jan 31, Spring = Jul 31
+def _last_gift_season_endpoint(last_date, giving_season):
+    """Return the endpoint of the season that contains the last gift date."""
+    y, m = last_date.year, last_date.month
+    if giving_season == 'Fall':
+        return pd.Timestamp(y + 1, 1, 31) if m >= 8 else pd.Timestamp(y, 1, 31)
+    else:  # Spring
+        if 2 <= m <= 7:  return pd.Timestamp(y, 7, 31)
+        elif m >= 8:     return pd.Timestamp(y, 7, 31)
+        else:            return pd.Timestamp(y - 1, 7, 31)   # Jan is off-season for Spring
+
+def _compute_donor_due(row, today):
+    giving_season  = row.get('GivingSeason', 'Mixed')
+    last_date      = row.get('LastDonationDate')
+    months_since   = row.get('MonthsSinceLastDonation', 9999)
+
+    if pd.isna(last_date) or giving_season == 'Mixed':
+        # No clear cycle — fall back to simple recency
+        return pd.Series({'SeasonsMissed': np.nan,
+                          '_DonorDueScore': max(0.0, 1.0 - months_since / 18.0)})
+
+    ep_month  = 1 if giving_season == 'Fall' else 7
+    last_ep   = _last_gift_season_endpoint(last_date, giving_season)
+
+    # Count completed season endpoints after the donor's last gift season
+    missed = sum(
+        1 for yr in range(last_ep.year, today.year + 2)
+        if last_ep < pd.Timestamp(yr, ep_month, 31) <= today
+    )
+
+    if missed == 0:
+        # Are we currently inside their giving season?
+        in_season = (giving_season == 'Fall'   and (today.month >= 8 or today.month == 1)) or \
+                    (giving_season == 'Spring' and 2 <= today.month <= 7)
+        score = 0.7 if in_season else 0.1
+    elif missed == 1:
+        score = 0.9
+    else:
+        score = 1.0
+
+    return pd.Series({'SeasonsMissed': float(missed), '_DonorDueScore': score})
+
+_due = df.apply(lambda row: _compute_donor_due(row, today), axis=1)
+df['SeasonsMissed']  = _due['SeasonsMissed']
+df['_DonorDueScore'] = _due['_DonorDueScore']
 
 
 def _propensity_score(frame, components):
@@ -383,6 +456,8 @@ COL_MAP = {
     'FirstDonationDate':       'First Donation Date',
     'LastDonationDate':        'Last Donation Date',
     'MonthsSinceLastDonation': 'Months Since Last Donation',
+    'GivingSeason':            'Giving Season',
+    'SeasonsMissed':           'Seasons Missed',
     'PreferredEventGenre':     'Favorite Genre',
     'PreferredEventClass':     'Favorite Class',
     'RegionAssignment':        'Geo Region',
@@ -457,6 +532,8 @@ _SUMMARY_DONOR_COLS = [
     ('LifetimeDonations', 'Lifetime Giving'),
     ('LastDonationDate',  'Last Gift Date'),
     ('DonationCount',     '# Gifts'),
+    ('GivingSeason',      'Giving Season'),
+    ('SeasonsMissed',     'Seasons Missed'),
 ]
 _SUMMARY_PII_SRC  = {'AccountName', 'Email'}
 _SUMMARY_CURRENCY = {'Avg Yearly Spend', 'Lifetime Giving'}
