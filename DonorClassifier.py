@@ -260,6 +260,7 @@ for col in numeric_cols:
         df[col] = df[col].replace([np.inf, -np.inf], np.nan)  # guard against inf values
 
 # Derived scoring inputs used by _propensity_score
+df['LatestEventDate']    = pd.to_datetime(df['LatestEventDate'], errors='coerce')
 df['_UpgradeRatio']      = df['AYM'] / df['AverageDonation'].replace(0, np.nan)
 df['_DonationFreshness'] = (1 - df['MonthsSinceLastDonation'] / ACTIVE_DONATION_MONTHS).clip(lower=0)
 df['_DormantRecency']    = 1 / df['MonthsSinceLastDonation'].clip(lower=1)
@@ -456,6 +457,7 @@ COL_MAP = {
     'FirstDonationDate':       'First Donation Date',
     'LastDonationDate':        'Last Donation Date',
     'MonthsSinceLastDonation': 'Months Since Last Donation',
+    'LatestEventDate':         'Last Event Date',
     'GivingSeason':            'Giving Season',
     'SeasonsMissed':           'Seasons Missed',
     'PreferredEventGenre':     'Favorite Genre',
@@ -514,12 +516,11 @@ def _write_sheet(writer, data, sheet_name, currency_cols=None, date_cols=None):
 # ---------------------------------------------------------------------------
 _SUMMARY_BASE_COLS = [
     ('AccountName',          'Name'),
-    ('DonorPropensityScore', 'Score'),
-    ('Segment',              'Segment'),
+    ('DonorPropensityScore', 'Priority Score'),
     ('Frequency',            'Events Attended'),
     ('AYM',                  'Avg Yearly Spend'),
     ('Lifespan',             'Years as Patron'),
-    ('Recency (Months)',     'Last Attended (Mo.)'),
+    ('LatestEventDate',      'Last Event Date'),
     ('PreferredEventGenre',  'Favorite Genre'),
     ('PreferredEventClass',  'Favorite Class'),
     ('ChorusMember',         'In Chorus'),
@@ -528,18 +529,20 @@ _SUMMARY_BASE_COLS = [
     ('RegionAssignment',     'Region'),
     ('Email',                'Email'),
 ]
+_SUMMARY_SEASON_COLS = [
+    ('GivingSeason',    'Giving Season'),
+    ('SeasonsMissed',   'Seasons Missed'),
+    ('LastDonationDate','Last Gift Date'),
+]
 _SUMMARY_DONOR_COLS = [
     ('LifetimeDonations', 'Lifetime Giving'),
-    ('LastDonationDate',  'Last Gift Date'),
-    ('DonationCount',     '# Gifts'),
-    ('GivingSeason',      'Giving Season'),
-    ('SeasonsMissed',     'Seasons Missed'),
+    ('DonationCount',     'Total Gifts'),
 ]
 _SUMMARY_PII_SRC  = {'AccountName', 'Email'}
 _SUMMARY_CURRENCY = {'Avg Yearly Spend', 'Lifetime Giving'}
-_SUMMARY_DATE     = {'Last Gift Date'}
+_SUMMARY_DATE     = {'Last Gift Date', 'Last Event Date'}
 _SUMMARY_AUTO     = {'Name', 'Email'}
-_SUMMARY_WIDE     = {'Segment', 'Favorite Genre', 'Favorite Class', 'Region', 'Status', 'Subscriber'}
+_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Status', 'Subscriber', 'Giving Season'}
 
 _TRANCHE_COLORS = {
     'Major Donors':                {'tab': '#C9A800', 'header': '#FFF2CC'},
@@ -576,7 +579,8 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
 
     col_map = list(_SUMMARY_BASE_COLS)
     if is_donor_tranche:
-        col_map += _SUMMARY_DONOR_COLS
+        # Insert season cols right after Score (index 1), then append donation cols at end
+        col_map = col_map[:2] + list(_SUMMARY_SEASON_COLS) + col_map[2:] + list(_SUMMARY_DONOR_COLS)
     if drop_pii:
         col_map = [(s, d) for s, d in col_map if s not in _SUMMARY_PII_SRC]
 
@@ -614,12 +618,28 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
     for col_num, col_name in enumerate(out.columns):
         ws.write(0, col_num, col_name, hdr_fmt)
 
-    # Conditional formatting: Score column — white → yellow → green gradient
-    if 'Score' in out.columns:
-        sc = list(out.columns).index('Score')
+    # Conditional formatting: Priority Score column — white → yellow → green gradient
+    if 'Priority Score' in out.columns:
+        sc = list(out.columns).index('Priority Score')
         ws.conditional_format(1, sc, len(out), sc, {
             'type': '3_color_scale',
             'min_color': '#FFFFFF', 'mid_color': '#FFEB84', 'max_color': '#63BE7B',
+        })
+
+    # Conditional formatting: Seasons Missed — green (0), amber (1), red (2+)
+    if 'Seasons Missed' in out.columns:
+        sm = list(out.columns).index('Seasons Missed')
+        ws.conditional_format(1, sm, len(out), sm, {
+            'type': 'cell', 'criteria': '==', 'value': 0,
+            'format': book.add_format({'bg_color': '#C6EFCE', 'font_color': '#276221'}),
+        })
+        ws.conditional_format(1, sm, len(out), sm, {
+            'type': 'cell', 'criteria': '==', 'value': 1,
+            'format': book.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'}),
+        })
+        ws.conditional_format(1, sm, len(out), sm, {
+            'type': 'cell', 'criteria': '>=', 'value': 2,
+            'format': book.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'}),
         })
 
     # Column widths and number formats
@@ -637,13 +657,105 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
             fmt = book.add_format({'num_format': 'mm/dd/yyyy'})
         elif col in _SUMMARY_CURRENCY:
             fmt = book.add_format({'num_format': '$#,##0'})
-        elif col == 'Score':
+        elif col == 'Priority Score':
             fmt = book.add_format({'num_format': '0.0'})
         elif col == 'Rank':
             fmt = book.add_format({'num_format': '0'})
         elif out[col].dtype.kind in 'fi':
             fmt = book.add_format({'num_format': '0'})
         ws.set_column(i, i, col_width, fmt)
+
+
+def _write_how_to_use(writer):
+    """Write a plain-English guide sheet for non-technical staff."""
+    book = writer.book
+    ws   = book.add_worksheet('How to Use')
+    ws.set_tab_color('#1F497D')
+    ws.set_column(0, 0, 22)
+    ws.set_column(1, 1, 72)
+
+    title_fmt   = book.add_format({'bold': True, 'font_size': 14, 'font_color': '#1F497D', 'bottom': 2})
+    section_fmt = book.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1, 'valign': 'vcenter'})
+    label_fmt   = book.add_format({'bold': True, 'valign': 'top', 'text_wrap': True})
+    body_fmt    = book.add_format({'text_wrap': True, 'valign': 'top'})
+
+    def row_write(r, label, body, row_height=None):
+        ws.write(r, 0, label, label_fmt)
+        ws.write(r, 1, body,  body_fmt)
+        if row_height:
+            ws.set_row(r, row_height)
+
+    r = 0
+    ws.write(r, 0, 'Patron Classification Report — How to Use', title_fmt)
+    ws.merge_range(r, 0, r, 1, 'Patron Classification Report — How to Use', title_fmt)
+    ws.set_row(r, 24)
+    r += 2
+
+    ws.merge_range(r, 0, r, 1, 'TABS — What each group means and what action to take', section_fmt)
+    ws.set_row(r, 18)
+    r += 1
+    tabs = [
+        ('Major Donors',                'Currently giving at high levels ($1,500+/yr or $5,000+ lifetime). '
+                                        'Priority for major gift conversations and upgrade asks.'),
+        ('Growth Prospects',            'Active donors in our best attendance segments with strong growth. '
+                                        'Well-positioned for an increased giving ask.'),
+        ('Active Donors - Renew',       'Gave within the last 18 months. Focus on securing renewal '
+                                        'before they lapse.'),
+        ('Dormant Donors - Reactivate', 'Previously donated but have stopped giving. Still attending events. '
+                                        'A warm reactivation ask is appropriate.'),
+        ('Prime Non-Donor Prospects',   'Highly engaged attendees who have never donated. '
+                                        'Ideal first-gift candidates.'),
+        ('Lapsed Donors - Review',      'Both giving and attendance have lapsed. '
+                                        'Review individually before any outreach.'),
+    ]
+    for label, desc in tabs:
+        row_write(r, label, desc, row_height=30)
+        r += 1
+    r += 1
+
+    ws.merge_range(r, 0, r, 1, 'COLUMNS — What each column means', section_fmt)
+    ws.set_row(r, 18)
+    r += 1
+    cols = [
+        ('Priority Score',  '1–100 ranking within this group. Higher = more likely to give now. '
+                            'Sort by this first when deciding who to contact.'),
+        ('Giving Season',   'Whether this patron tends to give in Fall (Aug–Jan) or Spring (Feb–Jul). '
+                            '"Mixed" means no clear pattern.'),
+        ('Seasons Missed',  'How many giving cycles have passed since their last gift. '
+                            'Green = current (gave this season), Amber = one season missed, '
+                            'Red = two or more seasons missed — highest reactivation priority.'),
+        ('Last Gift Date',  'Date of their most recent donation.'),
+        ('Last Event Date', 'Date they last attended a Music Worcester event.'),
+        ('Events Attended', 'Total number of events attended across all years.'),
+        ('Avg Yearly Spend','Average amount spent on tickets per year (not including donations).'),
+        ('Years as Patron', 'How long they have been buying tickets from Music Worcester.'),
+        ('Lifetime Giving', 'Total amount donated to Music Worcester over all years.'),
+        ('Total Gifts',     'Number of separate donations made.'),
+        ('Favorite Genre',  'The type of music they attend most (Classical, Pops, World, etc.).'),
+        ('Favorite Class',  'The event tier they prefer most (Headliner, Signature, Community, etc.).'),
+        ('In Chorus',       'Yes = current Worcester Chorus member.'),
+        ('Subscriber',      'Current = active subscriber; Past = former subscriber.'),
+        ('Status',          'Board member, corporator, or officer (blank = general patron).'),
+        ('Region',          'Geographic area based on mailing address.'),
+    ]
+    for label, desc in cols:
+        row_write(r, label, desc, row_height=40)
+        r += 1
+    r += 1
+
+    ws.merge_range(r, 0, r, 1, 'GETTING STARTED', section_fmt)
+    ws.set_row(r, 18)
+    r += 1
+    ws.merge_range(r, 0, r, 1,
+        '1. Choose the tab for the outreach you are planning.\n'
+        '2. The top 30 rows are shown by default, ranked by Priority Score. '
+        'To see all patrons, clear the filter on the Rank column.\n'
+        '3. For donors: check Seasons Missed first — red rows are most overdue.\n'
+        '4. Use Last Event Date to confirm the patron is still active before reaching out.\n'
+        '5. In Chorus, Board, and Subscriber status are strong signals — prioritize them '
+        'when outreach capacity is limited.',
+        body_fmt)
+    ws.set_row(r, 90)
 
 
 def _write_summary_overview(writer, tranche_counts):
@@ -687,6 +799,7 @@ def _write_summary(writer, drop_pii=False):
         'Prime Non-Donor Prospects':   len(prime_prospects),
         'Lapsed Donors - Review':      len(lapsed_donors),
     }
+    _write_how_to_use(writer)
     _write_summary_overview(writer, counts)
     _write_summary_sheet(writer, major_donors,    'Major Donors',                is_donor_tranche=True,  drop_pii=drop_pii)
     _write_summary_sheet(writer, growth_prospects,'Growth Prospects',            is_donor_tranche=True,  drop_pii=drop_pii)
