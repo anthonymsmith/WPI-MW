@@ -57,24 +57,29 @@ SUMMARY_TOP_N          = 30   # Rows visible by default in summary; clear Rank f
 
 # Propensity score weights per tranche — (internal_column, weight) tuples, weights sum to 1.0
 # Tune here; see _propensity_score for normalization details
-T1_WEIGHTS = [('_UpgradeRatio',     0.30), ('Regularity',         0.25),
+T1_WEIGHTS = [('_UpgradeRatio',     0.25), ('Regularity',         0.22),
               ('GrowthScore',        0.15), ('_DonationFreshness', 0.10),
-              ('_IsChorus',          0.10), ('_PatronRank',        0.10)]
-T2_WEIGHTS = [('GrowthScore',        0.30), ('AYM',                0.25),
-              ('Regularity',         0.15), ('_DonationFreshness', 0.10),
-              ('_IsChorus',          0.10), ('_PatronRank',        0.10)]
-T3_WEIGHTS = [('_DonationFreshness', 0.30), ('Regularity',         0.25),
-              ('_LogDonationCount',  0.15), ('RFMScore',           0.10),
-              ('_IsChorus',          0.10), ('_PatronRank',        0.10)]
-T4_WEIGHTS = [('_DormantRecency',    0.30), ('RFMScore',           0.25),
-              ('AverageDonation',    0.15), ('Regularity',         0.10),
-              ('_IsChorus',          0.10), ('_PatronRank',        0.10)]
-T5_WEIGHTS = [('AYM',                0.30), ('GrowthScore',        0.25),
-              ('Regularity',         0.15), ('Lifespan',           0.10),
-              ('_IsChorus',          0.10), ('_PatronRank',        0.10)]
-T6_WEIGHTS = [('AverageDonation',    0.40), ('RFMScore',           0.25),
-              ('_DormantRecency',    0.15), ('_IsChorus',          0.10),
-              ('_PatronRank',        0.10)]
+              ('_IsChorus',          0.10), ('_PatronRank',        0.10),
+              ('_SubscriberRank',    0.08)]
+T2_WEIGHTS = [('GrowthScore',        0.31), ('AYM',                0.22),
+              ('Regularity',         0.13), ('_DonationFreshness', 0.10),
+              ('_IsChorus',          0.10), ('_PatronRank',        0.10),
+              ('_SubscriberRank',    0.04)]
+T3_WEIGHTS = [('_DonationFreshness', 0.27), ('Regularity',         0.22),
+              ('_LogDonationCount',  0.13), ('RFMScore',           0.10),
+              ('_IsChorus',          0.10), ('_PatronRank',        0.10),
+              ('_SubscriberRank',    0.08)]
+T4_WEIGHTS = [('_DormantRecency',    0.27), ('RFMScore',           0.22),
+              ('AverageDonation',    0.13), ('Regularity',         0.10),
+              ('_IsChorus',          0.10), ('_PatronRank',        0.10),
+              ('_SubscriberRank',    0.08)]
+T5_WEIGHTS = [('AYM',                0.27), ('GrowthScore',        0.22),
+              ('Regularity',         0.13), ('Lifespan',           0.10),
+              ('_IsChorus',          0.10), ('_PatronRank',        0.10),
+              ('_SubscriberRank',    0.08)]
+T6_WEIGHTS = [('AverageDonation',    0.37), ('RFMScore',           0.22),
+              ('_DormantRecency',    0.13), ('_IsChorus',          0.10),
+              ('_PatronRank',        0.10), ('_SubscriberRank',    0.08)]
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -236,6 +241,8 @@ df['_LogDonationCount']  = np.log1p(df['DonationCount'])
 df['_IsChorus']          = df['ChorusMember'].astype(float)
 _patron_rank = {'officer': 4, 'board': 3, 'ex-board': 2, 'corporator': 1, 'patron': 0}
 df['_PatronRank']        = df['PatronStatus'].map(_patron_rank).fillna(0).astype(float)
+_subscriber_rank = {'current': 2, 'previous': 1, 'never': 0}
+df['_SubscriberRank']    = df['Subscriber'].map(_subscriber_rank).fillna(0).astype(float)
 
 
 def _propensity_score(frame, components):
@@ -368,6 +375,7 @@ COL_MAP = {
     'Regularity':              'Regularity',
     'ChorusMember':            'Chorus Member',
     'PatronStatus':            'Patron Status',
+    'Subscriber':              'Subscriber',
     'IsDonor':                 'Is Donor',
     'LifetimeDonations':       'Lifetime Donations',
     'AverageDonation':         'Average Donation',
@@ -440,6 +448,7 @@ _SUMMARY_BASE_COLS = [
     ('PreferredEventGenre',  'Favorite Genre'),
     ('PreferredEventClass',  'Favorite Class'),
     ('ChorusMember',         'In Chorus'),
+    ('Subscriber',           'Subscriber'),
     ('PatronStatus',         'Status'),
     ('RegionAssignment',     'Region'),
     ('Email',                'Email'),
@@ -453,7 +462,7 @@ _SUMMARY_PII_SRC  = {'AccountName', 'Email'}
 _SUMMARY_CURRENCY = {'Avg Yearly Spend', 'Lifetime Giving'}
 _SUMMARY_DATE     = {'Last Gift Date'}
 _SUMMARY_AUTO     = {'Name', 'Email'}
-_SUMMARY_WIDE     = {'Segment', 'Favorite Genre', 'Favorite Class', 'Region', 'Status'}
+_SUMMARY_WIDE     = {'Segment', 'Favorite Genre', 'Favorite Class', 'Region', 'Status', 'Subscriber'}
 
 _TRANCHE_COLORS = {
     'Major Donors':                {'tab': '#C9A800', 'header': '#FFF2CC'},
@@ -501,6 +510,8 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
     # Friendly transformations
     if 'In Chorus' in out.columns:
         out['In Chorus'] = out['In Chorus'].map({True: 'Yes', False: 'No', 1: 'Yes', 0: 'No'}).fillna('No')
+    if 'Subscriber' in out.columns:
+        out['Subscriber'] = out['Subscriber'].map({'current': 'Current', 'previous': 'Past', 'never': ''}).fillna('')
     if 'Status' in out.columns:
         out['Status'] = out['Status'].apply(
             lambda v: '' if pd.isna(v) or str(v).lower() == 'patron' else str(v).capitalize()
