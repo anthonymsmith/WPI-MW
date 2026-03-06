@@ -355,7 +355,7 @@ def _propensity_score(frame, components):
 # ---------------------------------------------------------------------------
 logger.info('Classifying tranches...')
 
-# Tranche 1: Major Donors — high-value current donors, upgrade ask
+# Tranche 1: Major Patrons — high-value current donors with strong attendance, upgrade ask
 # No segment filter: preserves donors who may show as attendance-Lapsed post-COVID
 major_donors = df[
     df['IsDonor'] &
@@ -365,7 +365,7 @@ major_donors = df[
 major_donors['DonorPropensityScore'] = _propensity_score(major_donors, T1_WEIGHTS)
 major_donors = major_donors.sort_values('DonorPropensityScore', ascending=False)
 classified_ids = set(major_donors['AccountId'])
-logger.info('  Major Donors:                %s', f'{len(major_donors):,}')
+logger.info('  Major Patrons:               %s', f'{len(major_donors):,}')
 
 # Tranche 2: Growth Prospects — active donors with strong attendance, upgrade ask
 # Best/High/Upsell segments with recent attendance: both donating AND attending well.
@@ -536,6 +536,7 @@ _SUMMARY_BASE_COLS = [
     ('PreferredEventGenre',  'Favorite Genre'),
     ('PreferredEventClass',  'Favorite Class'),
     ('ChorusMember',         'In Chorus'),
+    ('FullPriceRate',        'Full Price Rate'),
     ('FullPriceBuyer',       'Full Price Buyer'),
     ('Subscriber',           'Subscriber'),
     ('PatronStatus',         'Board Role'),
@@ -555,10 +556,10 @@ _SUMMARY_PII_SRC  = {'AccountName', 'Email'}
 _SUMMARY_CURRENCY = {'Avg Yearly Spend', 'Lifetime Giving'}
 _SUMMARY_DATE     = {'Last Gift Date', 'Last Event Date'}
 _SUMMARY_AUTO     = {'Name', 'Email'}
-_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Board Role', 'Subscriber', 'Giving Season', 'Full Price Buyer'}
+_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Board Role', 'Subscriber', 'Giving Season', 'Full Price Buyer', 'Full Price Rate'}
 
 _TRANCHE_COLORS = {
-    'Major Donors':                {'tab': '#C9A800', 'header': '#FFF2CC'},
+    'Major Patrons':               {'tab': '#C9A800', 'header': '#FFF2CC'},
     'Growth Prospects':            {'tab': '#00813A', 'header': '#E2EFDA'},
     'Active Donors - Renew':       {'tab': '#2E5FAA', 'header': '#DCE6F1'},
     'Dormant Donors - Reactivate': {'tab': '#C55A11', 'header': '#FCE4D6'},
@@ -566,8 +567,9 @@ _TRANCHE_COLORS = {
     'Lapsed Donors - Review':      {'tab': '#595959', 'header': '#F2F2F2'},
 }
 _TRANCHE_INFO = [
-    ('Major Donors',               'Upgrade ask',
-     'High-value current donors (avg yearly spend ≥ $1,500 or lifetime giving ≥ $5,000). '
+    ('Major Patrons',              'Upgrade ask',
+     'High-value patrons with significant ticket spend and donation history '
+     '(avg yearly spend ≥ $1,500 or lifetime giving ≥ $5,000). '
      'Priority candidates for major gift conversations and upgrade asks.'),
     ('Growth Prospects',           'Upgrade ask',
      'Active donors in our best attendance segments showing strong growth. '
@@ -674,6 +676,8 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
             fmt = book.add_format({'num_format': '$#,##0'})
         elif col == 'Priority Score':
             fmt = book.add_format({'num_format': '0.0'})
+        elif col == 'Full Price Rate':
+            fmt = book.add_format({'num_format': '0%'})
         elif col == 'Rank':
             fmt = book.add_format({'num_format': '0'})
         elif out[col].dtype.kind in 'fi':
@@ -710,7 +714,8 @@ def _write_how_to_use(writer):
     ws.set_row(r, 18)
     r += 1
     tabs = [
-        ('Major Donors',                'Currently giving at high levels ($1,500+/yr or $5,000+ lifetime). '
+        ('Major Patrons',               'High-value patrons with significant ticket spend and donation history '
+                                        '($1,500+/yr or $5,000+ lifetime). '
                                         'Priority for major gift conversations and upgrade asks.'),
         ('Growth Prospects',            'Active donors in our best attendance segments with strong growth. '
                                         'Well-positioned for an increased giving ask.'),
@@ -810,7 +815,7 @@ def _write_summary_overview(writer, tranche_counts):
 def _write_summary(writer, drop_pii=False):
     """Write Overview + all tranche summary sheets."""
     counts = {
-        'Major Donors':                len(major_donors),
+        'Major Patrons':               len(major_donors),
         'Growth Prospects':            len(growth_prospects),
         'Active Donors - Renew':       len(active_donors),
         'Dormant Donors - Reactivate': len(dormant_donors),
@@ -819,7 +824,7 @@ def _write_summary(writer, drop_pii=False):
     }
     _write_how_to_use(writer)
     _write_summary_overview(writer, counts)
-    _write_summary_sheet(writer, major_donors,    'Major Donors',                is_donor_tranche=True,  drop_pii=drop_pii)
+    _write_summary_sheet(writer, major_donors,    'Major Patrons',               is_donor_tranche=True,  drop_pii=drop_pii)
     _write_summary_sheet(writer, growth_prospects,'Growth Prospects',            is_donor_tranche=True,  drop_pii=drop_pii)
     _write_summary_sheet(writer, active_donors,   'Active Donors - Renew',       is_donor_tranche=True,  drop_pii=drop_pii)
     _write_summary_sheet(writer, dormant_donors,  'Dormant Donors - Reactivate', is_donor_tranche=True,  drop_pii=drop_pii)
@@ -848,7 +853,7 @@ def _write_tranches(writer, drop_pii=False):
             out = out.drop(columns=[c for c in PII_COLS if c in out.columns])
         return out
 
-    _write_sheet(writer, prep(major_donors),    'Major Donors')
+    _write_sheet(writer, prep(major_donors),    'Major Patrons')
     _write_sheet(writer, prep(growth_prospects),'Growth Prospects')
     _write_sheet(writer, prep(active_donors),   'Active Donors - Renew')
     _write_sheet(writer, prep(dormant_donors),  'Dormant Donors - Reactivate')
