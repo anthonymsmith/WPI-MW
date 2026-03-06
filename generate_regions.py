@@ -27,20 +27,23 @@ import pandas as pd
 WORCESTER_LAT = 42.2626
 WORCESTER_LON = -71.8023
 
-INPUT_CSV  = 'uszips.csv'
+INPUT_ZIP  = 'simplemaps_uszips_basicv1.94.zip'  # simplemaps download (contains uszips.csv)
 OUTPUT_CSV = 'regions_computed.csv'
 
 # MA distance thresholds (miles from Worcester)
 WOR_CENTRAL_MAX  =  8   # Wor Central inner radius
 WOR_NEAR_MAX     = 40   # outer edge of close-in Worcester sub-regions
-WOR_WEST_MAX     = 45   # Wor West outer edge (beyond this = West MA if westerly)
+WOR_WEST_MAX     = 35   # Wor West outer edge (beyond this = West MA if westerly)
 WOR_SOUTH_MAX    = 30   # Wor South outer edge
 
 # MW/495 corridor
-MW_MIN_DIST      = 15   # inside this → Wor* sub-regions take priority
+MW_MIN_DIST      =  8   # same as Wor Central radius — Wor Central handles < 8
 MW_MAX_DIST      = 52   # outside this (easterly) → Boston Reg
 MW_MAX_LON       = -71.25  # eastern boundary; towns east of this → Boston Reg
                             # (roughly the Route 128/95 ring)
+
+# West MA
+WEST_MA_MIN_DIST = 35   # beyond this, westerly bearing → West MA
 
 # ---------------------------------------------------------------------------
 # Geometry helpers
@@ -87,39 +90,41 @@ def assign_region(row):
         if zip5[:3] == '019':
             return 'North Shore'
 
-        # Cape Cod and South Shore — Plymouth, Cape, New Bedford/Wareham
-        if zip5[:3] in ('023', '024', '025', '026', '027'):
-            return 'South'
+        # RI/Cape — Plymouth, Cape Cod, New Bedford/Wareham
+        # (024=Newton/Brookline/Lexington — intentionally excluded)
+        if zip5[:3] in ('023', '025', '026', '027'):
+            return 'RI/Cape'
 
         # Wor Central
         if dist < WOR_CENTRAL_MAX:
             return 'Wor Central'
 
         # Wor North — Fitchburg, Leominster, Gardner (true north, close-in)
-        if dist < WOR_NEAR_MAX and (brng >= 310 or brng <= 20):
+        if dist < WOR_NEAR_MAX and (brng >= 300 or brng <= 20):
             return 'Wor North'
 
         # Wor West — Spencer, Charlton, Sturbridge, Brookfield
-        if dist < WOR_WEST_MAX and 200 <= brng <= 310:
+        if dist < WOR_WEST_MAX and 200 <= brng < 300:
             return 'Wor West'
 
         # West MA — Springfield, Northampton, Pittsfield (far west/northwest)
-        if dist > WOR_WEST_MAX and 240 <= brng <= 330:
+        if dist > WEST_MA_MIN_DIST and 220 <= brng <= 340:
             return 'West MA'
 
         # Wor South — Grafton, Northbridge, Sutton, Uxbridge
         if dist < WOR_SOUTH_MAX and 130 <= brng < 200:
             return 'Wor South'
 
-        # MW/495 — Marlborough, Framingham, Natick (Pike), Concord (Rte 2), Westford (495)
+        # MW/495 — Westborough, Marlborough, Framingham, Natick (Pike),
+        #           Concord (Rte 2), Westford (495)
         if (MW_MIN_DIST <= dist <= MW_MAX_DIST
-                and 15 <= brng <= 135
+                and 20 <= brng <= 135
                 and lon <= MW_MAX_LON):
             return 'MW/495'
 
-        # South — remaining southeastern MA (Attleboro, Taunton, Brockton)
+        # RI/Cape — remaining southeastern MA (Attleboro, Taunton, Brockton, S. Bridgewater)
         if 120 <= brng <= 220:
-            return 'South'
+            return 'RI/Cape'
 
         # Boston Reg — everything else in MA
         return 'Boston Reg'
@@ -131,7 +136,7 @@ def assign_region(row):
         return 'North'
 
     if state == 'RI':
-        return 'South'
+        return 'RI/Cape'
 
     if state == 'CT':
         # Northern CT (Hartford and above) — close enough to Worcester → South
@@ -155,17 +160,19 @@ def assign_region(row):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-if not os.path.exists(INPUT_CSV):
-    print(f'ERROR: {INPUT_CSV} not found in the working directory.')
+if not os.path.exists(INPUT_ZIP):
+    print(f'ERROR: {INPUT_ZIP} not found in the working directory.')
     print()
     print('  1. Go to https://simplemaps.com/data/us-zips')
-    print('  2. Download the free Basic database')
-    print('  3. Save as uszips.csv in this directory')
+    print('  2. Download the free Basic database (zip file)')
+    print(f'  3. Save as {INPUT_ZIP} in this directory')
     print('  4. Re-run this script')
     sys.exit(1)
 
-print(f'Loading {INPUT_CSV}...')
-zips = pd.read_csv(INPUT_CSV, dtype={'zip': str}, low_memory=False)
+import zipfile
+print(f'Loading uszips.csv from {INPUT_ZIP}...')
+with zipfile.ZipFile(INPUT_ZIP) as z:
+    zips = pd.read_csv(z.open('uszips.csv'), dtype={'zip': str}, low_memory=False)
 print(f'  {len(zips):,} ZIP codes loaded')
 
 print('Assigning regions...')

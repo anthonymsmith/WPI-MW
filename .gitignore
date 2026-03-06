@@ -1,5 +1,6 @@
 # Data files
 *.csv
+!regions_computed.csv
 *.xlsx
 *.xls
 *.xlsm
