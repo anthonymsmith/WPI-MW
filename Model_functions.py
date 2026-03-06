@@ -431,7 +431,9 @@ def calculate_patron_metrics(df, logger):
         'ChorusMember': 'max',
         'DuesTxn': 'max',
         'FrequentBulkBuyer': 'max',
-        'Student': 'max'
+        'Student': 'max',
+        'FullPriceRate': 'max',
+        'FullPriceBuyer': 'max',
     }).reset_index()
 
     metrics_df = metrics_df.merge(growth_scores, on='AccountId', how='left')

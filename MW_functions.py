@@ -888,6 +888,49 @@ def add_key_events(df, logger):
 
 
 
+_EXCLUDED_DISCOUNT_PATTERNS = ['chorus', 'opportunity', 'card to culture', 'joy of music', 'ebt']
+_EXCLUDED_DISCOUNT_EXACT    = {'Exchange Code'}
+FULL_PRICE_RATE_THRESHOLD   = 0.80  # minimum FullPriceRate to flag as FullPriceBuyer
+FULL_PRICE_MIN_TICKETS      = 3     # minimum paid tickets required (excludes single-event buyers)
+
+def add_full_price_rate(df, logger):
+    """Compute FullPriceRate (0–1) and FullPriceBuyer flag per patron.
+
+    Only paid tickets (PreDiscountTotal > 0) are counted.
+    Chorus, social equity, and exchange discount codes are excluded from the
+    denominator — they represent benefits or subsidies, not price sensitivity.
+    """
+    start = perf_counter()
+
+    paid = df[df['PreDiscountTotal'] > 0].copy()
+    code_lower = paid['DiscountCode'].str.lower().fillna('')
+    is_excluded = (
+        code_lower.str.contains('|'.join(_EXCLUDED_DISCOUNT_PATTERNS), na=False) |
+        paid['DiscountCode'].isin(_EXCLUDED_DISCOUNT_EXACT)
+    )
+    countable = paid[~is_excluded].copy()
+    countable['_IsFullPrice'] = countable['DiscountTotal'].abs() < 0.01
+
+    per_patron = countable.groupby('AccountId').agg(
+        _PaidCount     = ('_IsFullPrice', 'count'),
+        _FullPriceCount= ('_IsFullPrice', 'sum'),
+    ).reset_index()
+    per_patron['FullPriceRate']  = (per_patron['_FullPriceCount'] / per_patron['_PaidCount']).round(3)
+    per_patron['FullPriceBuyer'] = (
+        (per_patron['FullPriceRate'] >= FULL_PRICE_RATE_THRESHOLD) &
+        (per_patron['_PaidCount']    >= FULL_PRICE_MIN_TICKETS)
+    )
+    per_patron = per_patron.drop(columns=['_PaidCount', '_FullPriceCount'])
+
+    df = df.merge(per_patron, on='AccountId', how='left')
+    df['FullPriceRate']  = df['FullPriceRate'].fillna(0.0)
+    df['FullPriceBuyer'] = df['FullPriceBuyer'].fillna(False)
+
+    logger.info('Full-price rate computed. FullPriceBuyers: %s. Execution Time: %s',
+                f"{per_patron['FullPriceBuyer'].sum():,}", _elapsed(start))
+    return df
+
+
 def add_bulk_buyers(df, logger):
     """Flag BulkBuyer (>=12 tickets/event) and FrequentBulkBuyer (bulk purchases at >=4 events) accounts."""
     start = perf_counter()
@@ -946,7 +989,8 @@ def get_patron_details(df,
                            'PatronStatus', 'Subscriber', 'ChorusMember', 'DuesTxn', 'Season', 'Student',
                            'EventGenre', 'Choral', 'Bach', 'Classical', 'Contemporary', 'Dance',
                            'Headliner', 'Local Favorite', 'Standard', 'Mission',
-                           'Mechanics Hall', 'Tuckerman Hall', 'JMAC', 'The Hanover Theatre']
+                           'Mechanics Hall', 'Tuckerman Hall', 'JMAC', 'The Hanover Theatre',
+                           'DiscountCode', 'PreDiscountTotal', 'DiscountTotal']
         df = df[initial_columns]
         df = df.sort_values(['AccountId', 'CreatedDate'])
         df = df.rename(columns={'Season': 'LatestSeason'})
@@ -955,6 +999,7 @@ def get_patron_details(df,
         df = df.merge(key_events, on='AccountId', how='left')
 
         df = add_bulk_buyers(df, logger)
+        df = add_full_price_rate(df, logger)
 
         # Genre/class/venue preference scores — aggregate full history before patron rollup
         genre_scores = mod.calculate_event_scores(df, logger, event_column='EventGenre')
@@ -1039,6 +1084,7 @@ def get_patron_details(df,
                            'HeadlinerScore', 'StandardScore', 'Local FavoriteScore', 'MissionScore',
                            'Mechanics HallScore', 'The Hanover TheatreScore', 'Tuckerman HallScore', 'JMACScore',
                            'PatronStatus', 'Subscriber', 'ChorusMember', 'DuesTxn', 'FrequentBulkBuyer', 'Student',
+                           'FullPriceRate', 'FullPriceBuyer',
                            'MonthsFromFirstEvent', 'MonthsToReturn', 'RecentEventYearsGap',
                            'FirstEvent', 'FirstEventDate', 'SecondEvent', 'SecondEventDate',
                            'PenultimateEvent', 'PenultimateEventDate', 'LatestEvent', 'LatestEventDate',
@@ -1063,6 +1109,7 @@ def get_patron_details(df,
                 'PatronStatus': 'Patron Status', 'Subscriber': 'Is Subscriber',
                 'ChorusMember': 'In Chorus', 'DuesTxn': 'Dues Txn',
                 'FrequentBulkBuyer': 'Frequent Bulk Buyer', 'Student': 'Is Student',
+                'FullPriceRate': 'Full Price Rate', 'FullPriceBuyer': 'Full Price Buyer',
                 'MonthsFromFirstEvent': 'Months Since First Event', 'MonthsToReturn': 'Months to Return',
                 'RecentEventYearsGap': 'Recent Event Gap (Years)',
                 'FirstEvent': 'First Event', 'FirstEventDate': 'First Event Date',
