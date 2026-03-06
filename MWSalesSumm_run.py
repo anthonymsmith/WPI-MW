@@ -67,7 +67,7 @@ PnL_file = 'Budget/EventPnL.xlsx' # Manually updated Event Profit and Loss file
 default_sales_file = 'SalesforceLatest.csv' # raw Saleforce input file
 AccountId_file = 'All Accounts Contacts IDs.csv' # currently not used.
 chorus_file = 'Worcester Chorus current members.xlsx' # List of chorus members, manually created
-regions_file = 'final_regions.csv' # input file to define region mapping.
+regions_file = 'regions_computed.csv' # input file to define region mapping.
 board_file = 'BoardCorporators.csv' # input file to identify board and corporators
 
 # output file names
