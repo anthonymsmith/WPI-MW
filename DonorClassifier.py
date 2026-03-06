@@ -848,14 +848,6 @@ def _write_summary(writer, drop_pii=False):
 # ---------------------------------------------------------------------------
 _DATE_FMT = {'datetime_format': 'mm/dd/yyyy', 'date_format': 'mm/dd/yyyy'}
 
-unmatched_out = unmatched_donors.rename(columns={
-    'LifetimeDonations': 'Lifetime Donations',
-    'AverageDonation':   'Average Donation',
-    'DonationCount':     'Donation Count',
-    'FirstDonationDate': 'First Donation Date',
-    'LastDonationDate':  'Last Donation Date',
-})
-
 def _write_tranches(writer, drop_pii=False):
     """Write all tranche sheets to an ExcelWriter. If drop_pii, omit PII columns."""
     def prep(frame):
@@ -871,7 +863,15 @@ def _write_tranches(writer, drop_pii=False):
     _write_sheet(writer, prep(prime_prospects), 'Prime Non-Donor Prospects')
     _write_sheet(writer, prep(lapsed_donors),   'Lapsed Donors - Review')
     if not drop_pii:
-        _write_sheet(writer, unmatched_out, 'Donors - No Attendance Match',
+        _write_sheet(writer,
+                     unmatched_donors.rename(columns={
+                         'LifetimeDonations': 'Lifetime Donations',
+                         'AverageDonation':   'Average Donation',
+                         'DonationCount':     'Donation Count',
+                         'FirstDonationDate': 'First Donation Date',
+                         'LastDonationDate':  'Last Donation Date',
+                     }),
+                     'Donors - No Attendance Match',
                      currency_cols={'Lifetime Donations', 'Average Donation'},
                      date_cols={'First Donation Date', 'Last Donation Date'})
 
