@@ -62,10 +62,10 @@ T1_WEIGHTS = [('_UpgradeRatio',    0.25), ('Regularity',        0.22),
               ('GrowthScore',       0.15), ('_DonorDueScore',    0.10),
               ('_IsChorus',         0.10), ('_PatronRank',       0.10),
               ('_SubscriberRank',   0.08)]
-T2_WEIGHTS = [('GrowthScore',       0.31), ('AYM',               0.22),
+T2_WEIGHTS = [('GrowthScore',       0.23), ('AYM',               0.22),
               ('Regularity',        0.13), ('_DonorDueScore',    0.10),
               ('_IsChorus',         0.10), ('_PatronRank',       0.10),
-              ('_SubscriberRank',   0.04)]
+              ('FullPriceRate',     0.08), ('_SubscriberRank',   0.04)]
 T3_WEIGHTS = [('_DonorDueScore',    0.27), ('Regularity',        0.22),
               ('_LogDonationCount', 0.13), ('RFMScore',          0.10),
               ('_IsChorus',         0.10), ('_PatronRank',       0.10),
@@ -74,10 +74,10 @@ T4_WEIGHTS = [('_DormantRecency',    0.27), ('RFMScore',           0.22),
               ('AverageDonation',    0.13), ('Regularity',         0.10),
               ('_IsChorus',          0.10), ('_PatronRank',        0.10),
               ('_SubscriberRank',    0.08)]
-T5_WEIGHTS = [('AYM',                0.27), ('GrowthScore',        0.22),
-              ('Regularity',         0.13), ('Lifespan',           0.10),
+T5_WEIGHTS = [('AYM',                0.20), ('GrowthScore',        0.22),
+              ('Regularity',         0.13), ('FullPriceRate',      0.12),
               ('_IsChorus',          0.10), ('_PatronRank',        0.10),
-              ('_SubscriberRank',    0.08)]
+              ('Lifespan',           0.05), ('_SubscriberRank',    0.08)]
 T6_WEIGHTS = [('AverageDonation',    0.37), ('RFMScore',           0.22),
               ('_DormantRecency',    0.13), ('_IsChorus',          0.10),
               ('_PatronRank',        0.10), ('_SubscriberRank',    0.08)]
@@ -473,6 +473,8 @@ COL_MAP = {
     'PreferredEventGenre':     'Favorite Genre',
     'PreferredEventClass':     'Favorite Class',
     'RegionAssignment':        'Geo Region',
+    'FullPriceRate':           'Full Price Rate',
+    'FullPriceBuyer':          'Full Price Buyer',
 }
 
 CURRENCY_COLS = {'Lifetime Donations', 'Average Donation', 'Avg Yearly Monetary'}
@@ -534,6 +536,7 @@ _SUMMARY_BASE_COLS = [
     ('PreferredEventGenre',  'Favorite Genre'),
     ('PreferredEventClass',  'Favorite Class'),
     ('ChorusMember',         'In Chorus'),
+    ('FullPriceBuyer',       'Full Price Buyer'),
     ('Subscriber',           'Subscriber'),
     ('PatronStatus',         'Board Role'),
     ('RegionAssignment',     'Region'),
@@ -552,7 +555,7 @@ _SUMMARY_PII_SRC  = {'AccountName', 'Email'}
 _SUMMARY_CURRENCY = {'Avg Yearly Spend', 'Lifetime Giving'}
 _SUMMARY_DATE     = {'Last Gift Date', 'Last Event Date'}
 _SUMMARY_AUTO     = {'Name', 'Email'}
-_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Board Role', 'Subscriber', 'Giving Season'}
+_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Board Role', 'Subscriber', 'Giving Season', 'Full Price Buyer'}
 
 _TRANCHE_COLORS = {
     'Major Donors':                {'tab': '#C9A800', 'header': '#FFF2CC'},
@@ -601,6 +604,8 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
     # Friendly transformations
     if 'In Chorus' in out.columns:
         out['In Chorus'] = out['In Chorus'].map({True: 'Yes', False: 'No', 1: 'Yes', 0: 'No'}).fillna('No')
+    if 'Full Price Buyer' in out.columns:
+        out['Full Price Buyer'] = out['Full Price Buyer'].map({True: 'Yes', False: 'No', 1: 'Yes', 0: 'No'}).fillna('No')
     if 'Subscriber' in out.columns:
         out['Subscriber'] = out['Subscriber'].map({'current': 'Current', 'previous': 'Past', 'never': ''}).fillna('')
     if 'Board Role' in out.columns:
@@ -745,6 +750,8 @@ def _write_how_to_use(writer):
         ('Favorite Genre',  'The type of music they attend most (Classical, Pops, World, etc.).'),
         ('Favorite Class',  'The event tier they prefer most (Headliner, Signature, Community, etc.).'),
         ('In Chorus',       'Yes = current Worcester Chorus member.'),
+        ('Full Price Buyer','Yes = patron pays full ticket price ≥80% of the time (excludes Chorus, '
+                            'EBT, and exchange discounts). Strong indicator of giving capacity.'),
         ('Subscriber',      'Current = active subscriber; Past = former subscriber.'),
         ('Board Role',      'Board member, corporator, or officer (blank = general patron).'),
         ('Region',          'Geographic area based on mailing address.'),
