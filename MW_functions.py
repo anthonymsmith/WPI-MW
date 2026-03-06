@@ -924,7 +924,7 @@ def add_full_price_rate(df, logger):
 
     df = df.merge(per_patron, on='AccountId', how='left')
     df['FullPriceRate']  = df['FullPriceRate'].fillna(0.0)
-    df['FullPriceBuyer'] = df['FullPriceBuyer'].fillna(False)
+    df['FullPriceBuyer'] = df['FullPriceBuyer'].fillna(False).astype(bool)
 
     logger.info('Full-price rate computed. FullPriceBuyers: %s. Execution Time: %s',
                 f"{per_patron['FullPriceBuyer'].sum():,}", _elapsed(start))
