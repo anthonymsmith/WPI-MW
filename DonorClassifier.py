@@ -459,7 +459,7 @@ COL_MAP = {
     'MonthsSinceLastDonation': 'Months Since Last Donation',
     'LatestEventDate':         'Last Event Date',
     'GivingSeason':            'Giving Season',
-    'SeasonsMissed':           'Seasons Missed',
+    'SeasonsMissed':           'Giving Cycles Missed',
     'PreferredEventGenre':     'Favorite Genre',
     'PreferredEventClass':     'Favorite Class',
     'RegionAssignment':        'Geo Region',
@@ -525,13 +525,13 @@ _SUMMARY_BASE_COLS = [
     ('PreferredEventClass',  'Favorite Class'),
     ('ChorusMember',         'In Chorus'),
     ('Subscriber',           'Subscriber'),
-    ('PatronStatus',         'Status'),
+    ('PatronStatus',         'Board Role'),
     ('RegionAssignment',     'Region'),
     ('Email',                'Email'),
 ]
 _SUMMARY_SEASON_COLS = [
     ('GivingSeason',    'Giving Season'),
-    ('SeasonsMissed',   'Seasons Missed'),
+    ('SeasonsMissed',   'Giving Cycles Missed'),
     ('LastDonationDate','Last Gift Date'),
 ]
 _SUMMARY_DONOR_COLS = [
@@ -542,7 +542,7 @@ _SUMMARY_PII_SRC  = {'AccountName', 'Email'}
 _SUMMARY_CURRENCY = {'Avg Yearly Spend', 'Lifetime Giving'}
 _SUMMARY_DATE     = {'Last Gift Date', 'Last Event Date'}
 _SUMMARY_AUTO     = {'Name', 'Email'}
-_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Status', 'Subscriber', 'Giving Season'}
+_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Board Role', 'Subscriber', 'Giving Season'}
 
 _TRANCHE_COLORS = {
     'Major Donors':                {'tab': '#C9A800', 'header': '#FFF2CC'},
@@ -593,8 +593,8 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
         out['In Chorus'] = out['In Chorus'].map({True: 'Yes', False: 'No', 1: 'Yes', 0: 'No'}).fillna('No')
     if 'Subscriber' in out.columns:
         out['Subscriber'] = out['Subscriber'].map({'current': 'Current', 'previous': 'Past', 'never': ''}).fillna('')
-    if 'Status' in out.columns:
-        out['Status'] = out['Status'].apply(
+    if 'Board Role' in out.columns:
+        out['Board Role'] = out['Board Role'].apply(
             lambda v: '' if pd.isna(v) or str(v).lower() == 'patron' else str(v).capitalize()
         )
 
@@ -618,17 +618,17 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
     for col_num, col_name in enumerate(out.columns):
         ws.write(0, col_num, col_name, hdr_fmt)
 
-    # Conditional formatting: Priority Score column — white → yellow → green gradient
+    # Conditional formatting: Priority Score column — white → light blue → dark blue gradient
     if 'Priority Score' in out.columns:
         sc = list(out.columns).index('Priority Score')
         ws.conditional_format(1, sc, len(out), sc, {
             'type': '3_color_scale',
-            'min_color': '#FFFFFF', 'mid_color': '#FFEB84', 'max_color': '#63BE7B',
+            'min_color': '#FFFFFF', 'mid_color': '#9DC3E6', 'max_color': '#2E5FAA',
         })
 
-    # Conditional formatting: Seasons Missed — green (0), amber (1), red (2+)
-    if 'Seasons Missed' in out.columns:
-        sm = list(out.columns).index('Seasons Missed')
+    # Conditional formatting: Giving Cycles Missed — green (0), amber (1), red (2+)
+    if 'Giving Cycles Missed' in out.columns:
+        sm = list(out.columns).index('Giving Cycles Missed')
         ws.conditional_format(1, sm, len(out), sm, {
             'type': 'cell', 'criteria': '==', 'value': 0,
             'format': book.add_format({'bg_color': '#C6EFCE', 'font_color': '#276221'}),
@@ -721,9 +721,9 @@ def _write_how_to_use(writer):
                             'Sort by this first when deciding who to contact.'),
         ('Giving Season',   'Whether this patron tends to give in Fall (Aug–Jan) or Spring (Feb–Jul). '
                             '"Mixed" means no clear pattern.'),
-        ('Seasons Missed',  'How many giving cycles have passed since their last gift. '
-                            'Green = current (gave this season), Amber = one season missed, '
-                            'Red = two or more seasons missed — highest reactivation priority.'),
+        ('Giving Cycles Missed', 'How many giving cycles (roughly 6-month periods) have passed '
+                                'since their last gift. Green = current, Amber = one cycle missed, '
+                                'Red = two or more missed — highest reactivation priority.'),
         ('Last Gift Date',  'Date of their most recent donation.'),
         ('Last Event Date', 'Date they last attended a Music Worcester event.'),
         ('Events Attended', 'Total number of events attended across all years.'),
@@ -735,7 +735,7 @@ def _write_how_to_use(writer):
         ('Favorite Class',  'The event tier they prefer most (Headliner, Signature, Community, etc.).'),
         ('In Chorus',       'Yes = current Worcester Chorus member.'),
         ('Subscriber',      'Current = active subscriber; Past = former subscriber.'),
-        ('Status',          'Board member, corporator, or officer (blank = general patron).'),
+        ('Board Role',      'Board member, corporator, or officer (blank = general patron).'),
         ('Region',          'Geographic area based on mailing address.'),
     ]
     for label, desc in cols:
@@ -750,7 +750,7 @@ def _write_how_to_use(writer):
         '1. Choose the tab for the outreach you are planning.\n'
         '2. The top 30 rows are shown by default, ranked by Priority Score. '
         'To see all patrons, clear the filter on the Rank column.\n'
-        '3. For donors: check Seasons Missed first — red rows are most overdue.\n'
+        '3. For donors: check Giving Cycles Missed first — red rows are most overdue.\n'
         '4. Use Last Event Date to confirm the patron is still active before reaching out.\n'
         '5. In Chorus, Board, and Subscriber status are strong signals — prioritize them '
         'when outreach capacity is limited.',
