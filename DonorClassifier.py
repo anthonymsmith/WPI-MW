@@ -21,7 +21,7 @@ Inputs:
     DonationsLatest.xlsx - Salesforce donation export
 
 Output:
-    Patron_Classification.xlsx - one sheet per tranche, plus unmatched donor review sheet
+    Donor_Classification.xlsx - one sheet per tranche, plus unmatched donor review sheet
 """
 
 import difflib
@@ -41,10 +41,10 @@ os.chdir(data_dir)
 
 patrons_file  = 'Patrons.csv'
 donor_file    = 'DonationsLatest.xlsx'
-output_file   = 'Patron_Classification.xlsx'
-anon_file     = 'Patron_Classification_Anon.xlsx'
-summary_file  = 'Patron_Classification_Summary.xlsx'
-anon_summary_file = 'Patron_Classification_Summary_Anon.xlsx'
+output_file   = 'Donor_Classification.xlsx'
+anon_file     = 'Donor_Classification_Anon.xlsx'
+summary_file  = 'Donor_Classification_Summary.xlsx'
+anon_summary_file = 'Donor_Classification_Summary_Anon.xlsx'
 review_file   = 'DonorNameMatchReview.xlsx'
 
 # Tranche thresholds — adjust here without touching logic below
@@ -54,6 +54,7 @@ ACTIVE_DONATION_MONTHS = 18    # Months since last donation to be considered "ac
 PRIME_RECENCY_MONTHS   = 12    # Ticket recency threshold for Prime Non-Donor Prospects
 GROWTH_RECENCY_MONTHS  = 18    # Ticket recency threshold for Growth Prospects
 SUMMARY_TOP_N          = 30   # Rows visible by default in summary; clear Rank filter to expand
+MIN_SEASON_DONATION    = 100  # Minimum gift amount counted toward season determination (excludes ticket add-ons)
 
 # Propensity score weights per tranche — (internal_column, weight) tuples, weights sum to 1.0
 # Tune here; see _propensity_score for normalization details
@@ -134,27 +135,35 @@ logger.info('%s unique donor accounts', f'{len(donor_summary):,}')
 # ---------------------------------------------------------------------------
 # Detect giving season per donor from individual gift dates
 # Staggered: Fall = Aug–Jan (endpoint Jan 31), Spring = Feb–Jul (endpoint Jul 31)
-# Handles Dec gifts recorded in January and June gifts recorded in July.
+# Gifts < MIN_SEASON_DONATION excluded (ticket add-ons, small round-ups, etc.)
+# Seasons: Fall, Spring, Both (consistent in both), Mixed (no clear pattern)
 # ---------------------------------------------------------------------------
 _FALL_MONTHS = {8, 9, 10, 11, 12, 1}
-donor_df['_season'] = donor_df['Close Date'].dt.month.apply(
+_season_df = donor_df[donor_df['Amount'] >= MIN_SEASON_DONATION].copy()
+_season_df['_season'] = _season_df['Close Date'].dt.month.apply(
     lambda m: 'Fall' if m in _FALL_MONTHS else 'Spring'
 )
 _season_counts = (
-    donor_df.groupby(['Account Name', '_season']).size()
+    _season_df.groupby(['Account Name', '_season']).size()
     .unstack(fill_value=0)
     .reindex(columns=['Fall', 'Spring'], fill_value=0)
 )
 _season_counts['GivingSeason'] = 'Mixed'
+# Both: gifts in each season, but neither clearly dominates
+_season_counts.loc[
+    (_season_counts['Fall'] >= 1) & (_season_counts['Spring'] >= 1), 'GivingSeason'
+] = 'Both'
+# Fall/Spring override Both when one season dominates by ≥ 1.5×
 _season_counts.loc[_season_counts['Fall'] > _season_counts['Spring'] * 1.5, 'GivingSeason'] = 'Fall'
 _season_counts.loc[_season_counts['Spring'] > _season_counts['Fall'] * 1.5, 'GivingSeason'] = 'Spring'
 donor_summary = donor_summary.merge(
     _season_counts[['GivingSeason']].reset_index(), on='Account Name', how='left'
 )
 donor_summary['GivingSeason'] = donor_summary['GivingSeason'].fillna('Mixed')
-logger.info('Giving seasons — Fall: %s  Spring: %s  Mixed: %s',
+logger.info('Giving seasons — Fall: %s  Spring: %s  Both: %s  Mixed: %s',
             (donor_summary['GivingSeason'] == 'Fall').sum(),
             (donor_summary['GivingSeason'] == 'Spring').sum(),
+            (donor_summary['GivingSeason'] == 'Both').sum(),
             (donor_summary['GivingSeason'] == 'Mixed').sum())
 
 # ---------------------------------------------------------------------------
@@ -288,8 +297,8 @@ def _compute_donor_due(row, today):
     last_date      = row.get('LastDonationDate')
     months_since   = row.get('MonthsSinceLastDonation', 9999)
 
-    if pd.isna(last_date) or giving_season == 'Mixed':
-        # No clear season — use annual cadence: 0 if gave within a year, else years elapsed
+    if pd.isna(last_date) or giving_season in ('Mixed', 'Both'):
+        # No single season — use annual cadence: 0 if gave within a year, else years elapsed
         years_missed = int(months_since // 12) if months_since < 9999 else np.nan
         return pd.Series({'SeasonsMissed': years_missed,
                           '_DonorDueScore': max(0.0, 1.0 - months_since / 18.0)})
@@ -720,8 +729,9 @@ def _write_how_to_use(writer):
     cols = [
         ('Priority Score',  '1–100 ranking within this group. Higher = more likely to give now. '
                             'Sort by this first when deciding who to contact.'),
-        ('Giving Season',   'Whether this patron tends to give in Fall (Aug–Jan) or Spring (Feb–Jul). '
-                            '"Mixed" means no clear pattern.'),
+        ('Giving Season',   'When this patron typically gives: Fall (Aug–Jan), Spring (Feb–Jul), '
+                            'Both (consistently gives in both windows), or Mixed (no clear pattern). '
+                            'Small add-on gifts under $100 are excluded from this calculation.'),
         ('Seasons Missed', 'How many giving seasons have passed since their last gift. '
                                 'Fall/Spring donors count 6-month seasons; Mixed donors count years. '
                                 'Green = current (0), Amber = one missed, Red = two or more — highest reactivation priority.'),
