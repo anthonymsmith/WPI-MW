@@ -289,8 +289,9 @@ def _compute_donor_due(row, today):
     months_since   = row.get('MonthsSinceLastDonation', 9999)
 
     if pd.isna(last_date) or giving_season == 'Mixed':
-        # No clear cycle — fall back to simple recency
-        return pd.Series({'SeasonsMissed': np.nan,
+        # No clear season — use annual cadence: 0 if gave within a year, else years elapsed
+        years_missed = int(months_since // 12) if months_since < 9999 else np.nan
+        return pd.Series({'SeasonsMissed': years_missed,
                           '_DonorDueScore': max(0.0, 1.0 - months_since / 18.0)})
 
     ep_month  = 1 if giving_season == 'Fall' else 7
@@ -459,7 +460,7 @@ COL_MAP = {
     'MonthsSinceLastDonation': 'Months Since Last Donation',
     'LatestEventDate':         'Last Event Date',
     'GivingSeason':            'Giving Season',
-    'SeasonsMissed':           'Giving Cycles Missed',
+    'SeasonsMissed':           'Seasons Missed',
     'PreferredEventGenre':     'Favorite Genre',
     'PreferredEventClass':     'Favorite Class',
     'RegionAssignment':        'Geo Region',
@@ -531,7 +532,7 @@ _SUMMARY_BASE_COLS = [
 ]
 _SUMMARY_SEASON_COLS = [
     ('GivingSeason',    'Giving Season'),
-    ('SeasonsMissed',   'Giving Cycles Missed'),
+    ('SeasonsMissed',   'Seasons Missed'),
     ('LastDonationDate','Last Gift Date'),
 ]
 _SUMMARY_DONOR_COLS = [
@@ -626,9 +627,9 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
             'min_color': '#FFFFFF', 'mid_color': '#9DC3E6', 'max_color': '#2E5FAA',
         })
 
-    # Conditional formatting: Giving Cycles Missed — green (0), amber (1), red (2+)
-    if 'Giving Cycles Missed' in out.columns:
-        sm = list(out.columns).index('Giving Cycles Missed')
+    # Conditional formatting: Seasons Missed — green (0), amber (1), red (2+)
+    if 'Seasons Missed' in out.columns:
+        sm = list(out.columns).index('Seasons Missed')
         ws.conditional_format(1, sm, len(out), sm, {
             'type': 'cell', 'criteria': '==', 'value': 0,
             'format': book.add_format({'bg_color': '#C6EFCE', 'font_color': '#276221'}),
@@ -721,9 +722,9 @@ def _write_how_to_use(writer):
                             'Sort by this first when deciding who to contact.'),
         ('Giving Season',   'Whether this patron tends to give in Fall (Aug–Jan) or Spring (Feb–Jul). '
                             '"Mixed" means no clear pattern.'),
-        ('Giving Cycles Missed', 'How many giving cycles (roughly 6-month periods) have passed '
-                                'since their last gift. Green = current, Amber = one cycle missed, '
-                                'Red = two or more missed — highest reactivation priority.'),
+        ('Seasons Missed', 'How many giving seasons have passed since their last gift. '
+                                'Fall/Spring donors count 6-month seasons; Mixed donors count years. '
+                                'Green = current (0), Amber = one missed, Red = two or more — highest reactivation priority.'),
         ('Last Gift Date',  'Date of their most recent donation.'),
         ('Last Event Date', 'Date they last attended a Music Worcester event.'),
         ('Events Attended', 'Total number of events attended across all years.'),
@@ -750,7 +751,7 @@ def _write_how_to_use(writer):
         '1. Choose the tab for the outreach you are planning.\n'
         '2. The top 30 rows are shown by default, ranked by Priority Score. '
         'To see all patrons, clear the filter on the Rank column.\n'
-        '3. For donors: check Giving Cycles Missed first — red rows are most overdue.\n'
+        '3. For donors: check Seasons Missed first — red rows are most overdue.\n'
         '4. Use Last Event Date to confirm the patron is still active before reaching out.\n'
         '5. In Chorus, Board, and Subscriber status are strong signals — prioritize them '
         'when outreach capacity is limited.',
