@@ -334,11 +334,22 @@ def _propensity_score(frame, components):
 
     NaN values are replaced with the tranche median before normalization.
     When all values in a component are equal, that component contributes 0.5 × weight.
+    Missing columns are skipped with a warning — their weight is redistributed
+    proportionally across present components.
     """
     if frame.empty:
         return pd.Series(dtype=float)
-    score = pd.Series(0.0, index=frame.index)
-    for col, weight in components:
+
+    present   = [(col, w) for col, w in components if col in frame.columns]
+    missing   = [(col, w) for col, w in components if col not in frame.columns]
+    for col, _ in missing:
+        logger.warning('_propensity_score: column %r not in data — skipped. '
+                       'Re-run MWSalesSumm to generate updated Patrons.csv.', col)
+
+    # Redistribute weight of missing columns proportionally
+    total_w   = sum(w for _, w in present) or 1.0
+    score     = pd.Series(0.0, index=frame.index)
+    for col, weight in present:
         s = frame[col].copy()
         s = s.fillna(s.median() if s.notna().any() else 0.0)
         lo, hi = s.min(), s.max()
@@ -346,7 +357,7 @@ def _propensity_score(frame, components):
             s = (s - lo) / (hi - lo)
         else:
             s = pd.Series(0.5, index=frame.index)
-        score += weight * s
+        score += (weight / total_w) * s
     return (score * 100).round(1)
 
 
