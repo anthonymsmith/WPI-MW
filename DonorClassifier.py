@@ -624,7 +624,7 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
         sc = list(out.columns).index('Priority Score')
         ws.conditional_format(1, sc, len(out), sc, {
             'type': '3_color_scale',
-            'min_color': '#FFFFFF', 'mid_color': '#9DC3E6', 'max_color': '#2E5FAA',
+            'min_color': '#FFFFFF', 'mid_color': '#BDD7EE', 'max_color': '#9DC3E6',
         })
 
     # Conditional formatting: Seasons Missed — green (0), amber (1), red (2+)
