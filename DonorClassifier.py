@@ -45,20 +45,22 @@ output_file   = 'Donor_Classification.xlsx'
 anon_file     = 'Donor_Classification_Anon.xlsx'
 summary_file  = 'Donor_Classification_Summary.xlsx'
 anon_summary_file = 'Donor_Classification_Summary_Anon.xlsx'
-review_file   = 'DonorNameMatchReview.xlsx'
+review_file        = 'DonorNameMatchReview.xlsx'
+campaign_file      = 'Donor_Campaign.xlsx'
+anon_campaign_file = 'Donor_Campaign_Anon.xlsx'
 
 # Tranche thresholds — adjust here without touching logic below
-MAJOR_DONOR_AYM        = 1500  # Average Yearly Monetary threshold for Major Donors
-MAJOR_DONOR_LIFETIME   = 5000  # Lifetime donation threshold for Major Donors
+MAJOR_DONOR_LIFETIME   = 5000  # Lifetime significant-gift threshold for Major Patrons
+MAJOR_GIFT_MIN         = 500   # Minimum single gift to qualify as a significant donation
 ACTIVE_DONATION_MONTHS = 18    # Months since last donation to be considered "active"
 PRIME_RECENCY_MONTHS   = 12    # Ticket recency threshold for Prime Non-Donor Prospects
 GROWTH_RECENCY_MONTHS  = 18    # Ticket recency threshold for Growth Prospects
-SUMMARY_TOP_N          = 30   # Rows visible by default in summary; clear Rank filter to expand
+SUMMARY_TOP_N          = 50   # Rows visible by default in summary; clear Rank filter to expand
 MIN_SEASON_DONATION    = 100  # Minimum gift amount counted toward season determination (excludes ticket add-ons)
 
 # Propensity score weights per tranche — (internal_column, weight) tuples, weights sum to 1.0
 # Tune here; see _propensity_score for normalization details
-T1_WEIGHTS = [('_UpgradeRatio',    0.25), ('Regularity',        0.22),
+T1_WEIGHTS = [('AverageDonation',  0.25), ('Regularity',        0.22),
               ('GrowthScore',       0.15), ('_DonorDueScore',    0.10),
               ('_IsChorus',         0.10), ('_PatronRank',       0.10),
               ('_SubscriberRank',   0.08)]
@@ -125,6 +127,7 @@ donor_summary = (
         DonorAccountId    = ('Account ID',         'first'),
         LifetimeDonations = ('Amount',             'sum'),
         AverageDonation   = ('Amount',             'mean'),
+        MaxDonation       = ('Amount',             'max'),
         DonationCount     = ('Amount',             'count'),
         FirstDonationDate = ('Close Date',         'min'),
         LastDonationDate  = ('Last Donation Date', 'max'),
@@ -366,12 +369,13 @@ def _propensity_score(frame, components):
 # ---------------------------------------------------------------------------
 logger.info('Classifying tranches...')
 
-# Tranche 1: Major Patrons — high-value current donors with strong attendance, upgrade ask
+# Tranche 1: Major Patrons — donors with at least one significant gift (≥ MAJOR_GIFT_MIN),
+# ranked by attendance engagement to surface the ones not yet in active cultivation.
 # No segment filter: preserves donors who may show as attendance-Lapsed post-COVID
 major_donors = df[
     df['IsDonor'] &
     (df['MonthsSinceLastDonation'] <= ACTIVE_DONATION_MONTHS) &
-    ((df['AYM'] >= MAJOR_DONOR_AYM) | (df['LifetimeDonations'] >= MAJOR_DONOR_LIFETIME))
+    (df['MaxDonation'] >= MAJOR_GIFT_MIN)
 ].copy()
 major_donors['DonorPropensityScore'] = _propensity_score(major_donors, T1_WEIGHTS)
 major_donors = major_donors.sort_values('DonorPropensityScore', ascending=False)
@@ -464,8 +468,9 @@ COL_MAP = {
     'RFMScore':                'RFM Score',
     'Recency (Months)':        'Recency (Months)',
     'Frequency':               'Frequency',
-    'Lifespan':                'Customer Lifespan',
+    'FullPriceRate':           'Full Price Rate',
     'AYM':                     'Avg Yearly Monetary',
+    'Lifespan':                'Customer Lifespan',
     'GrowthScore':             'Growth Score',
     'Regularity':              'Regularity',
     'ChorusMember':            'Chorus Member',
@@ -484,8 +489,6 @@ COL_MAP = {
     'PreferredEventGenre':     'Favorite Genre',
     'PreferredEventClass':     'Favorite Class',
     'RegionAssignment':        'Geo Region',
-    'FullPriceRate':           'Full Price Rate',
-    'FullPriceBuyer':          'Full Price Buyer',
 }
 
 CURRENCY_COLS = {'Lifetime Donations', 'Average Donation', 'Avg Yearly Monetary'}
@@ -541,14 +544,13 @@ _SUMMARY_BASE_COLS = [
     ('AccountName',          'Name'),
     ('DonorPropensityScore', 'Priority Score'),
     ('Frequency',            'Events Attended'),
+    ('FullPriceRate',        'Full Price Rate'),
     ('AYM',                  'Avg Yearly Spend'),
     ('Lifespan',             'Years as Patron'),
     ('LatestEventDate',      'Last Event Date'),
     ('PreferredEventGenre',  'Favorite Genre'),
     ('PreferredEventClass',  'Favorite Class'),
     ('ChorusMember',         'In Chorus'),
-    ('FullPriceRate',        'Full Price Rate'),
-    ('FullPriceBuyer',       'Full Price Buyer'),
     ('Subscriber',           'Subscriber'),
     ('PatronStatus',         'Board Role'),
     ('RegionAssignment',     'Region'),
@@ -567,7 +569,7 @@ _SUMMARY_PII_SRC  = {'AccountName', 'Email'}
 _SUMMARY_CURRENCY = {'Avg Yearly Spend', 'Lifetime Giving'}
 _SUMMARY_DATE     = {'Last Gift Date', 'Last Event Date'}
 _SUMMARY_AUTO     = {'Name', 'Email'}
-_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Board Role', 'Subscriber', 'Giving Season', 'Full Price Buyer', 'Full Price Rate'}
+_SUMMARY_WIDE     = {'Favorite Genre', 'Favorite Class', 'Region', 'Board Role', 'Subscriber', 'Giving Season', 'Full Price Rate'}
 
 _TRANCHE_COLORS = {
     'Major Patrons':               {'tab': '#C9A800', 'header': '#FFF2CC'},
@@ -617,8 +619,6 @@ def _write_summary_sheet(writer, frame, sheet_name, is_donor_tranche, drop_pii=F
     # Friendly transformations
     if 'In Chorus' in out.columns:
         out['In Chorus'] = out['In Chorus'].map({True: 'Yes', False: 'No', 1: 'Yes', 0: 'No'}).fillna('No')
-    if 'Full Price Buyer' in out.columns:
-        out['Full Price Buyer'] = out['Full Price Buyer'].map({True: 'Yes', False: 'No', 1: 'Yes', 0: 'No'}).fillna('No')
     if 'Subscriber' in out.columns:
         out['Subscriber'] = out['Subscriber'].map({'current': 'Current', 'previous': 'Past', 'never': ''}).fillna('')
     if 'Board Role' in out.columns:
@@ -766,8 +766,8 @@ def _write_how_to_use(writer):
         ('Favorite Genre',  'The type of music they attend most (Classical, Pops, World, etc.).'),
         ('Favorite Class',  'The event tier they prefer most (Headliner, Signature, Community, etc.).'),
         ('In Chorus',       'Yes = current Worcester Chorus member.'),
-        ('Full Price Buyer','Yes = patron pays full ticket price ≥80% of the time (excludes Chorus, '
-                            'EBT, and exchange discounts). Strong indicator of giving capacity.'),
+        ('Full Price Rate', 'Proportion of tickets purchased at full price (excludes Chorus, EBT, '
+                            'and exchange discounts). Higher = stronger indicator of giving capacity.'),
         ('Subscriber',      'Current = active subscriber; Past = former subscriber.'),
         ('Board Role',      'Board member, corporator, or officer (blank = general patron).'),
         ('Region',          'Geographic area based on mailing address.'),
@@ -782,7 +782,7 @@ def _write_how_to_use(writer):
     r += 1
     ws.merge_range(r, 0, r, 1,
         '1. Choose the tab for the outreach you are planning.\n'
-        '2. The top 30 rows are shown by default, ranked by Priority Score. '
+        '2. The top 50 rows are shown by default, ranked by Priority Score. '
         'To see all patrons, clear the filter on the Rank column.\n'
         '3. For donors: check Seasons Missed first — red rows are most overdue.\n'
         '4. Use Last Event Date to confirm the patron is still active before reaching out.\n'
@@ -821,6 +821,170 @@ def _write_summary_overview(writer, tranche_counts):
         ws.set_row(row_idx, 45, row_fmt)
         for col_num, val in enumerate(rows[row_idx - 1]):
             ws.write(row_idx, col_num, val, row_fmt)
+
+
+_CAMPAIGN_TRANCHE_ORDER = [
+    'Major Patrons', 'Growth Prospects', 'Active Donors - Renew',
+    'Dormant Donors - Reactivate', 'Prime Non-Donor Prospects',
+]
+_next_campaign = 'Fall' if today.month in _FALL_MONTHS else 'Spring'
+
+
+def _build_campaign_frame(season):
+    """Return a combined DataFrame of all patrons targeted for one campaign season."""
+    subsets = []
+    donor_tranches = [
+        (major_donors,    'Major Patrons'),
+        (growth_prospects,'Growth Prospects'),
+        (active_donors,   'Active Donors - Renew'),
+        (dormant_donors,  'Dormant Donors - Reactivate'),
+    ]
+    for frame, name in donor_tranches:
+        mask = frame['GivingSeason'].isin([season, 'Both'])
+        if season == _next_campaign:
+            mask = mask | (frame['GivingSeason'] == 'Mixed')
+        sub = frame[mask].copy()
+        sub['_Tranche'] = name
+        sub['_InBoth']  = sub['GivingSeason'].isin(['Both']) | (sub['GivingSeason'] == 'Mixed')
+        subsets.append(sub)
+
+    # T5 — all prospects, both campaigns
+    t5 = prime_prospects.copy()
+    t5['_Tranche'] = 'Prime Non-Donor Prospects'
+    t5['_InBoth']  = True
+    subsets.append(t5)
+
+    combined = pd.concat(subsets, ignore_index=True)
+    combined['_TrancheRank'] = combined['_Tranche'].map(
+        {t: i for i, t in enumerate(_CAMPAIGN_TRANCHE_ORDER)}
+    )
+    combined = combined.sort_values(
+        ['_TrancheRank', 'DonorPropensityScore'],
+        ascending=[True, False],
+    ).drop(columns=['_TrancheRank'])
+    return combined
+
+
+def _write_campaign_sheet(writer, frame, sheet_name, drop_pii=False):
+    """Write one campaign sheet (Fall or Spring) with all targeted patrons."""
+    book   = writer.book
+    colors = {'tab': '#1F497D', 'header': '#D9E1F2'}
+
+    # Build column list
+    col_map = (
+        [('_Tranche',            'Tranche')]
+        + [('AccountName',          'Name')]
+        + [('DonorPropensityScore', 'Priority Score')]
+        + list(_SUMMARY_SEASON_COLS)
+        + [
+            ('Frequency',            'Events Attended'),
+            ('FullPriceRate',        'Full Price Rate'),
+            ('AYM',                  'Avg Yearly Spend'),
+            ('Lifespan',             'Years as Patron'),
+            ('LatestEventDate',      'Last Event Date'),
+            ('PreferredEventGenre',  'Favorite Genre'),
+            ('PreferredEventClass',  'Favorite Class'),
+            ('ChorusMember',         'In Chorus'),
+            ('Subscriber',           'Subscriber'),
+            ('PatronStatus',         'Board Role'),
+            ('RegionAssignment',     'Region'),
+            ('Email',                'Email'),
+            ('_InBoth',              'In Both Campaigns'),
+        ]
+        + list(_SUMMARY_DONOR_COLS)
+    )
+
+    if drop_pii:
+        col_map = [(s, d) for s, d in col_map if s not in _SUMMARY_PII_SRC]
+
+    available = [(s, d) for s, d in col_map if s in frame.columns]
+    out = frame[[s for s, _ in available]].copy()
+    out = out.rename(columns=dict(available))
+
+    # Friendly transformations
+    if 'In Chorus' in out.columns:
+        out['In Chorus'] = out['In Chorus'].map({True: 'Yes', False: 'No', 1: 'Yes', 0: 'No'}).fillna('No')
+    if 'Subscriber' in out.columns:
+        out['Subscriber'] = out['Subscriber'].map({'current': 'Current', 'previous': 'Past', 'never': ''}).fillna('')
+    if 'Board Role' in out.columns:
+        out['Board Role'] = out['Board Role'].apply(
+            lambda v: '' if pd.isna(v) or str(v).lower() == 'patron' else str(v).capitalize()
+        )
+    if 'In Both Campaigns' in out.columns:
+        out['In Both Campaigns'] = out['In Both Campaigns'].map({True: 'Yes', False: ''}).fillna('')
+
+    out.insert(0, 'Rank', range(1, len(out) + 1))
+    out.to_excel(writer, sheet_name=sheet_name, index=False)
+    ws = writer.sheets[sheet_name]
+
+    ws.set_tab_color(colors['tab'])
+    ws.freeze_panes(1, 0)
+    ws.autofilter(0, 0, len(out), len(out.columns) - 1)
+
+    hdr_fmt = book.add_format({
+        'text_wrap': True, 'bold': True, 'valign': 'top',
+        'bg_color': colors['header'], 'border': 1,
+    })
+    ws.set_row(0, 45)
+    for col_num, col_name in enumerate(out.columns):
+        ws.write(0, col_num, col_name, hdr_fmt)
+
+    # Priority Score gradient
+    if 'Priority Score' in out.columns:
+        sc = list(out.columns).index('Priority Score')
+        ws.conditional_format(1, sc, len(out), sc, {
+            'type': '3_color_scale',
+            'min_color': '#FFFFFF', 'mid_color': '#FFEB84', 'max_color': '#63BE7B',
+        })
+
+    # Seasons Missed colors
+    if 'Seasons Missed' in out.columns:
+        sm = list(out.columns).index('Seasons Missed')
+        ws.conditional_format(1, sm, len(out), sm, {
+            'type': 'cell', 'criteria': '==', 'value': 0,
+            'format': book.add_format({'bg_color': '#C6EFCE', 'font_color': '#276221'}),
+        })
+        ws.conditional_format(1, sm, len(out), sm, {
+            'type': 'cell', 'criteria': '==', 'value': 1,
+            'format': book.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'}),
+        })
+        ws.conditional_format(1, sm, len(out), sm, {
+            'type': 'cell', 'criteria': '>=', 'value': 2,
+            'format': book.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'}),
+        })
+
+    # Column widths and formats
+    for i, col in enumerate(out.columns):
+        if col in _SUMMARY_AUTO:
+            col_width = max(out[col].astype(str).map(len).max(), len(col)) + 2
+        elif col in _SUMMARY_WIDE or col == 'Tranche':
+            col_width = 16
+        elif col in _SUMMARY_DATE:
+            col_width = 13
+        else:
+            col_width = 8
+        fmt = None
+        if col in _SUMMARY_DATE:
+            fmt = book.add_format({'num_format': 'mm/dd/yyyy'})
+        elif col in _SUMMARY_CURRENCY:
+            fmt = book.add_format({'num_format': '$#,##0'})
+        elif col == 'Priority Score':
+            fmt = book.add_format({'num_format': '0.0'})
+        elif col == 'Full Price Rate':
+            fmt = book.add_format({'num_format': '0%'})
+        elif col == 'Rank':
+            fmt = book.add_format({'num_format': '0'})
+        elif out[col].dtype.kind in 'fi':
+            fmt = book.add_format({'num_format': '0'})
+        ws.set_column(i, i, col_width, fmt)
+
+
+def _write_campaign(writer, drop_pii=False):
+    """Write Fall and Spring campaign sheets."""
+    fall_df   = _build_campaign_frame('Fall')
+    spring_df = _build_campaign_frame('Spring')
+    _write_campaign_sheet(writer, fall_df,   'Fall Campaign',   drop_pii)
+    _write_campaign_sheet(writer, spring_df, 'Spring Campaign', drop_pii)
 
 
 def _write_summary(writer, drop_pii=False):
@@ -906,3 +1070,13 @@ logger.info('Writing %s...', anon_summary_file)
 with pd.ExcelWriter(anon_summary_file, engine='xlsxwriter', **_DATE_FMT) as writer:
     _write_summary(writer, drop_pii=True)
 logger.info('Done. Anonymized summary written to: %s', anon_summary_file)
+
+logger.info('Writing %s... (next campaign: %s)', campaign_file, _next_campaign)
+with pd.ExcelWriter(campaign_file, engine='xlsxwriter', **_DATE_FMT) as writer:
+    _write_campaign(writer, drop_pii=False)
+logger.info('Done. Campaign lists written to: %s', campaign_file)
+
+logger.info('Writing %s...', anon_campaign_file)
+with pd.ExcelWriter(anon_campaign_file, engine='xlsxwriter', **_DATE_FMT) as writer:
+    _write_campaign(writer, drop_pii=True)
+logger.info('Done. Anonymized campaign lists written to: %s', anon_campaign_file)

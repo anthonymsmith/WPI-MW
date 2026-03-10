@@ -890,11 +890,8 @@ def add_key_events(df, logger):
 
 _EXCLUDED_DISCOUNT_PATTERNS = ['chorus', 'opportunity', 'card to culture', 'joy of music', 'ebt']
 _EXCLUDED_DISCOUNT_EXACT    = {'Exchange Code'}
-FULL_PRICE_RATE_THRESHOLD   = 0.80  # minimum FullPriceRate to flag as FullPriceBuyer
-FULL_PRICE_MIN_TICKETS      = 3     # minimum paid tickets required (excludes single-event buyers)
-
 def add_full_price_rate(df, logger):
-    """Compute FullPriceRate (0–1) and FullPriceBuyer flag per patron.
+    """Compute FullPriceRate (0–1) per patron.
 
     Only paid tickets (PreDiscountTotal > 0) are counted.
     Chorus, social equity, and exchange discount codes are excluded from the
@@ -915,19 +912,13 @@ def add_full_price_rate(df, logger):
         _PaidCount     = ('_IsFullPrice', 'count'),
         _FullPriceCount= ('_IsFullPrice', 'sum'),
     ).reset_index()
-    per_patron['FullPriceRate']  = (per_patron['_FullPriceCount'] / per_patron['_PaidCount']).round(3)
-    per_patron['FullPriceBuyer'] = (
-        (per_patron['FullPriceRate'] >= FULL_PRICE_RATE_THRESHOLD) &
-        (per_patron['_PaidCount']    >= FULL_PRICE_MIN_TICKETS)
-    )
+    per_patron['FullPriceRate'] = (per_patron['_FullPriceCount'] / per_patron['_PaidCount']).round(3)
     per_patron = per_patron.drop(columns=['_PaidCount', '_FullPriceCount'])
 
     df = df.merge(per_patron, on='AccountId', how='left')
-    df['FullPriceRate']  = df['FullPriceRate'].fillna(0.0)
-    df['FullPriceBuyer'] = df['FullPriceBuyer'].fillna(False).astype(bool)
+    df['FullPriceRate'] = df['FullPriceRate'].fillna(0.0)
 
-    logger.info('Full-price rate computed. FullPriceBuyers: %s. Execution Time: %s',
-                f"{per_patron['FullPriceBuyer'].sum():,}", _elapsed(start))
+    logger.info('Full-price rate computed. Execution Time: %s', _elapsed(start))
     return df
 
 
@@ -1084,7 +1075,7 @@ def get_patron_details(df,
                            'HeadlinerScore', 'StandardScore', 'Local FavoriteScore', 'MissionScore',
                            'Mechanics HallScore', 'The Hanover TheatreScore', 'Tuckerman HallScore', 'JMACScore',
                            'PatronStatus', 'Subscriber', 'ChorusMember', 'DuesTxn', 'FrequentBulkBuyer', 'Student',
-                           'FullPriceRate', 'FullPriceBuyer',
+                           'FullPriceRate',
                            'MonthsFromFirstEvent', 'MonthsToReturn', 'RecentEventYearsGap',
                            'FirstEvent', 'FirstEventDate', 'SecondEvent', 'SecondEventDate',
                            'PenultimateEvent', 'PenultimateEventDate', 'LatestEvent', 'LatestEventDate',
@@ -1109,7 +1100,7 @@ def get_patron_details(df,
                 'PatronStatus': 'Patron Status', 'Subscriber': 'Is Subscriber',
                 'ChorusMember': 'In Chorus', 'DuesTxn': 'Dues Txn',
                 'FrequentBulkBuyer': 'Frequent Bulk Buyer', 'Student': 'Is Student',
-                'FullPriceRate': 'Full Price Rate', 'FullPriceBuyer': 'Full Price Buyer',
+                'FullPriceRate': 'Full Price Rate',
                 'MonthsFromFirstEvent': 'Months Since First Event', 'MonthsToReturn': 'Months to Return',
                 'RecentEventYearsGap': 'Recent Event Gap (Years)',
                 'FirstEvent': 'First Event', 'FirstEventDate': 'First Event Date',

@@ -433,7 +433,6 @@ def calculate_patron_metrics(df, logger):
         'FrequentBulkBuyer': 'max',
         'Student': 'max',
         'FullPriceRate': 'max',
-        'FullPriceBuyer': 'max',
     }).reset_index()
 
     metrics_df = metrics_df.merge(growth_scores, on='AccountId', how='left')
@@ -449,7 +448,7 @@ def calculate_patron_metrics(df, logger):
     metrics_df['DaysFromFirstEvent'] = metrics_df['DaysFromFirstEvent'].fillna(3600)
 
     # Calculate additional metrics
-    metrics_df['RecentEventYearsGap'] = metrics_df['DaysFromPenultimateEvent'] /365
+    metrics_df['RecentEventYearsGap'] = (metrics_df['DaysFromPenultimateEvent'] / 365).fillna(0)
     metrics_df['Engagement'] = safe_divide(metrics_df['Frequency'], metrics_df['DaysFromFirstEvent'])
 
     # Apply binning for RFM scores
