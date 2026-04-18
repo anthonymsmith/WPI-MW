@@ -1,6 +1,7 @@
 """
-Compare two forecasting approaches for 25-26 season to date:
-  Model A: Current weighted average by (EventClass, EventVenue, EventGenre)
+Compare forecasting approaches for 25-26 season to date:
+  Model A: Current hierarchy — (Class,Venue,LoB,SubGenre) → (Class,Venue,SubGenre)
+           → (Class,Venue,Genre) → (Class,Venue) → (SubGenre)
   Model B: Event name matching — use event's own history first, fall back to Model A
 
 Training: all seasons through 24-25 (temporal holdout for 25-26).
@@ -10,6 +11,7 @@ import pandas as pd
 import numpy as np
 import os
 import warnings
+from forecast_artist_adjustment import apply_artist_adjustment, print_adjustment_summary
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -41,15 +43,16 @@ def load_data():
     df['Quantity'] = pd.to_numeric(df.get('Quantity'), errors='coerce').fillna(0)
     df['TicketTotal'] = pd.to_numeric(df.get('TicketTotal'), errors='coerce').fillna(0)
 
+    # Merge from manifest: EventLoB only (EventSubGenre stays from CSV to avoid collision)
     manifest_meta = em.drop_duplicates(subset='EventId')[
         ['EventId', 'EventName', 'EventStatus', 'EventType', 'EventClass',
-         'EventVenue', 'EventGenre', 'EventCapacity']
-    ]
+         'EventVenue', 'EventGenre', 'EventLoB', 'EventCapacity']
+    ].copy()
     for c in ['EventStatus', 'EventType']:
         manifest_meta[c] = manifest_meta[c].astype(str).str.strip().str.title()
 
     merged = df.merge(manifest_meta, on='EventId', how='left', suffixes=('', '_m'))
-    for c in ['EventStatus', 'EventType', 'EventClass', 'EventVenue', 'EventGenre']:
+    for c in ['EventStatus', 'EventType', 'EventClass', 'EventVenue', 'EventGenre', 'EventLoB']:
         col_m = c + '_m'
         if col_m in merged.columns:
             merged[c] = merged[c].combine_first(merged[col_m])
@@ -59,6 +62,10 @@ def load_data():
             merged[c] = merged[c].astype(str).str.strip().str.title()
 
     merged['EventCapacity'] = pd.to_numeric(merged.get('EventCapacity'), errors='coerce')
+    merged['EventLoB'] = merged['EventLoB'].fillna('Concert')
+    if 'EventSubGenre' not in merged.columns:
+        merged['EventSubGenre'] = np.nan
+
     return em, merged
 
 
@@ -72,15 +79,16 @@ def get_training_df(merged, training_seasons):
         mask
     ].copy()
     filtered['Weight'] = filtered['Season'].apply(assign_season_weight)
-    filtered['WeightedTickets'] = filtered['Quantity'] * filtered['Weight']
     return filtered
 
 
-def build_class_models(filtered):
-    """Model A: weighted avg by (EventClass, EventVenue, EventGenre) with fallbacks."""
+def build_hierarchy_models(filtered):
+    """5-level hierarchy: (Class,Venue,LoB,SubGenre) → (Class,Venue,SubGenre)
+       → (Class,Venue,Genre) → (Class,Venue) → (SubGenre)"""
     ea = (
         filtered
-        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue', 'EventGenre', 'Season'],
+        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
+                  'EventGenre', 'EventLoB', 'EventSubGenre', 'Season'],
                  group_keys=False)
         .agg(TotalTickets=('Quantity', 'sum'), Weight=('Weight', 'first'),
              EventCapacity=('EventCapacity', 'max'))
@@ -93,22 +101,30 @@ def build_class_models(filtered):
         return wt / tw if tw > 0 else np.nan
 
     primary = (
-        ea.groupby(['EventClass', 'EventVenue', 'EventGenre'], group_keys=False)
-        .apply(lambda g: pd.Series({'WeightedAvg': wg_avg(g)})).reset_index()
+        ea.groupby(['EventClass', 'EventVenue', 'EventLoB', 'EventSubGenre'], group_keys=False)
+        .apply(lambda g: pd.Series({'WA_p': wg_avg(g)})).reset_index()
     )
     f1 = (
-        ea.groupby(['EventClass', 'EventVenue'], group_keys=False)
-        .apply(lambda g: pd.Series({'WeightedAvg_f1': wg_avg(g)})).reset_index()
+        ea.groupby(['EventClass', 'EventVenue', 'EventSubGenre'], group_keys=False)
+        .apply(lambda g: pd.Series({'WA_f1': wg_avg(g)})).reset_index()
     )
     f2 = (
-        ea.groupby(['EventGenre'], group_keys=False)
-        .apply(lambda g: pd.Series({'WeightedAvg_f2': wg_avg(g)})).reset_index()
+        ea.groupby(['EventClass', 'EventVenue', 'EventGenre'], group_keys=False)
+        .apply(lambda g: pd.Series({'WA_f2': wg_avg(g)})).reset_index()
     )
-    return primary, f1, f2
+    f3 = (
+        ea.groupby(['EventClass', 'EventVenue'], group_keys=False)
+        .apply(lambda g: pd.Series({'WA_f3': wg_avg(g)})).reset_index()
+    )
+    f4 = (
+        ea.groupby(['EventSubGenre'], group_keys=False)
+        .apply(lambda g: pd.Series({'WA_f4': wg_avg(g)})).reset_index()
+    )
+    return primary, f1, f2, f3, f4
 
 
 def build_name_model(filtered):
-    """Model B component: weighted avg attendance per EventName."""
+    """Weighted avg attendance per EventName."""
     ea = (
         filtered
         .groupby(['EventId', 'EventName', 'Season'], group_keys=False)
@@ -127,40 +143,51 @@ def build_name_model(filtered):
     return name_model
 
 
-def predict_model_a(events_df, primary, f1, f2):
+def predict_model_a(events_df, primary, f1, f2, f3, f4):
     fc = events_df.copy()
-    for col in ['EventClass', 'EventVenue', 'EventGenre']:
+    for col in ['EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre']:
         fc[col] = fc[col].astype(str).str.strip()
 
-    fc = fc.merge(primary, on=['EventClass', 'EventVenue', 'EventGenre'], how='left')
-    fc = fc.merge(f1, on=['EventClass', 'EventVenue'], how='left')
-    fc = fc.merge(f2, on='EventGenre', how='left')
+    fc = fc.merge(primary, on=['EventClass', 'EventVenue', 'EventLoB', 'EventSubGenre'], how='left')
+    fc = fc.merge(f1, on=['EventClass', 'EventVenue', 'EventSubGenre'], how='left')
+    fc = fc.merge(f2, on=['EventClass', 'EventVenue', 'EventGenre'], how='left')
+    fc = fc.merge(f3, on=['EventClass', 'EventVenue'], how='left')
+    fc = fc.merge(f4, on='EventSubGenre', how='left')
 
     fc['Pred_A'] = (
-        fc['WeightedAvg']
-        .combine_first(fc['WeightedAvg_f1'])
-        .combine_first(fc['WeightedAvg_f2'])
+        fc['WA_p']
+        .combine_first(fc['WA_f1'])
+        .combine_first(fc['WA_f2'])
+        .combine_first(fc['WA_f3'])
+        .combine_first(fc['WA_f4'])
     )
-    fc['FallbackLevel'] = 'Primary'
-    fc.loc[fc['WeightedAvg'].isna() & fc['WeightedAvg_f1'].notna(), 'FallbackLevel'] = 'F1 (Class+Venue)'
-    fc.loc[fc['WeightedAvg'].isna() & fc['WeightedAvg_f1'].isna(), 'FallbackLevel'] = 'F2 (Genre)'
+    # Label fallback level
+    conditions = [
+        fc['WA_p'].notna(),
+        fc['WA_p'].isna() & fc['WA_f1'].notna(),
+        fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].notna(),
+        fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].notna(),
+    ]
+    choices = ['Primary (Class+Venue+LoB+SubGenre)',
+               'F1 (Class+Venue+SubGenre)',
+               'F2 (Class+Venue+Genre)',
+               'F3 (Class+Venue)']
+    fc['FallbackLevel'] = np.select(conditions, choices, default='F4 (SubGenre)')
     return fc
 
 
 def predict_model_b(events_df_with_a, name_model):
-    """
-    Model B: use event name history if available; otherwise use Model A prediction.
-    Events with ≥2 prior seasons of name history get the name-based prediction.
-    """
+    """Model B: use event name history (≥2 seasons); otherwise fall back to Model A."""
     fc = events_df_with_a.copy()
     fc = fc.merge(name_model, on='EventName', how='left')
 
-    # Use name model if event has appeared in ≥2 prior seasons
     has_name_history = fc['NameSeasons'] >= 2
     fc['Pred_B'] = np.where(has_name_history, fc['NameWeightedAvg'], fc['Pred_A'])
-    fc['Model_B_Source'] = np.where(has_name_history,
-                                    fc['NameSeasons'].apply(lambda n: f'Name history ({int(n) if pd.notna(n) else 0} seasons)'),
-                                    'Fallback to Model A')
+    fc['Model_B_Source'] = np.where(
+        has_name_history,
+        fc['NameSeasons'].apply(lambda n: f'Name ({int(n) if pd.notna(n) else 0} seasons)'),
+        'Fallback → Model A'
+    )
     return fc
 
 
@@ -177,7 +204,7 @@ def print_metrics(label, comp, pred_col):
     mape = valid['PctErr'].mean() * 100
     wape = valid['AbsErr'].sum() / valid['Actual'].sum() * 100
     bias = valid['SignedPct'].mean() * 100
-    print(f"  {label:<35} MAPE={mape:.1f}%  WAPE={wape:.1f}%  Bias={bias:+.1f}%  (n={len(valid)})")
+    print(f"  {label:<40} MAPE={mape:.1f}%  WAPE={wape:.1f}%  Bias={bias:+.1f}%  (n={len(valid)})")
 
 
 def main():
@@ -188,10 +215,10 @@ def main():
     filtered_train = get_training_df(merged, all_prior)
 
     # Build models
-    primary, f1, f2 = build_class_models(filtered_train)
+    primary, f1, f2, f3, f4 = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
-    # Get 25-26 completed events
+    # Get 25-26 completed events with actuals
     actuals_2526 = (
         merged[
             (merged['Season'] == FORECAST_SEASON) &
@@ -200,65 +227,83 @@ def main():
             (merged['TicketStatus'] == 'Active') &
             (merged['Quantity'] > 0)
         ]
-        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue', 'EventGenre'], group_keys=False)
+        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
+                  'EventGenre', 'EventLoB', 'EventSubGenre'], group_keys=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
 
-    # Get capacity from manifest
+    # Capacity from manifest
     cap = em.drop_duplicates('EventId')[['EventId', 'EventCapacity']].copy()
     cap['EventCapacity'] = pd.to_numeric(cap['EventCapacity'], errors='coerce')
     actuals_2526 = actuals_2526.merge(cap, on='EventId', how='left')
 
     # Generate predictions
-    fc = predict_model_a(actuals_2526, primary, f1, f2)
+    fc = predict_model_a(actuals_2526, primary, f1, f2, f3, f4)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
 
+    # Build labelled history for artist adjustment training
+    # Event-level actuals from training seasons
+    hist_actuals = (
+        filtered_train
+        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
+                  'EventGenre', 'EventLoB', 'EventSubGenre'], group_keys=False)
+        .agg(Actual=('Quantity', 'sum'))
+        .reset_index()
+    )
+    hist_actuals = hist_actuals.merge(cap, on='EventId', how='left')
+    hist_fc = predict_model_a(hist_actuals, primary, f1, f2, f3, f4)
+
+    fc = apply_artist_adjustment(
+        fc,
+        merged_history=hist_fc,
+        actuals_history=hist_fc['Actual'],
+        bucket_preds_history=hist_fc['Pred_A'],
+    )
+    print_adjustment_summary(fc)
+
+    has_history = fc['NameSeasons'] >= 2
+    n_total = len(fc)
+    n_history = has_history.sum()
+
     # ── Summary metrics ──────────────────────────────────────────────────
-    print("=" * 70)
-    print(f"25-26 FORECAST vs ACTUALS (n={len(fc[fc['Actual']>0])} completed events)")
-    print("=" * 70)
-    print_metrics("Model A: Class/Venue/Genre weighted avg", fc, 'Pred_A')
-    print_metrics("Model B: Event name matching + fallback", fc, 'Pred_B')
+    print("=" * 75)
+    print(f"25-26 FORECAST vs ACTUALS  (n={n_total} completed events)")
+    print("=" * 75)
+    print_metrics("Model A: Hierarchy (all events)", fc, 'Pred_A')
+    print_metrics("Model B: Name history + fallback (all events)", fc, 'Pred_B')
+    print()
+    print_metrics(f"Model A: Hierarchy  (prior-season events only, n={n_history})",
+                  fc[has_history], 'Pred_A')
+    print_metrics(f"Model B: Name history  (prior-season events only, n={n_history})",
+                  fc[has_history], 'Pred_B')
 
     # ── Event-level detail ───────────────────────────────────────────────
     print("\nEVENT-LEVEL DETAIL")
-    print(f"{'EventName':<50} {'Class':<15} {'Actual':>7} {'Pred_A':>7} {'Pred_B':>7} {'Err_A':>7} {'Err_B':>7}  Source")
-    print("-" * 130)
-    for _, row in fc.sort_values('EventName').iterrows():
+    hdr = f"{'EventName':<45} {'Class':<10} {'SubGenre':<18} {'Actual':>7} {'Pred_A':>7} {'Pred_B':>7} {'Err_A':>7} {'Err_B':>7}  Source"
+    print(hdr)
+    print("-" * len(hdr))
+    for _, row in fc.sort_values(['EventClass', 'EventName']).iterrows():
         err_a = f"{(row['Pred_A'] - row['Actual']) / row['Actual'] * 100:+.0f}%" if pd.notna(row['Pred_A']) else "N/A"
         err_b = f"{(row['Pred_B'] - row['Actual']) / row['Actual'] * 100:+.0f}%" if pd.notna(row['Pred_B']) else "N/A"
-        print(f"{str(row['EventName']):<50} {str(row['EventClass']):<15} "
+        marker = "★" if row['NameSeasons'] >= 2 else " "
+        print(f"{marker}{str(row['EventName']):<44} {str(row['EventClass']):<10} "
+              f"{str(row['EventSubGenre']):<18} "
               f"{row['Actual']:>7.0f} {row['Pred_A']:>7.0f} {row['Pred_B']:>7.0f} "
               f"{err_a:>7} {err_b:>7}  {row['Model_B_Source']}")
+    print("  ★ = event has ≥2 seasons of prior name history")
 
     # ── Name model coverage ──────────────────────────────────────────────
-    print("\nNAME MODEL COVERAGE")
-    has_history = fc['NameSeasons'] >= 2
-    print(f"  Events with ≥2 seasons of name history: {has_history.sum()} / {len(fc)}")
-    print(f"  Events using fallback (new events):      {(~has_history).sum()} / {len(fc)}")
-
-    # Show what name history looks like for matched events
-    matched = fc[has_history][['EventName', 'EventClass', 'NameSeasons', 'NameWeightedAvg', 'Actual', 'Pred_A']].copy()
-    if not matched.empty:
-        print("\n  Matched events — name history summary:")
-        print(f"  {'EventName':<50} {'Seasons':>7} {'NameAvg':>8} {'Model_A':>8} {'Actual':>8}")
-        for _, r in matched.iterrows():
-            print(f"  {str(r['EventName']):<50} {r['NameSeasons']:>7.0f} {r['NameWeightedAvg']:>8.0f} {r['Pred_A']:>8.0f} {r['Actual']:>8.0f}")
-
-    # ── Trend note ───────────────────────────────────────────────────────
-    print("\n" + "=" * 70)
-    print("ATTENDANCE TREND CONTEXT (from prior analysis)")
-    print("  Mission:   -8.4%/season  R²=0.82  (strong decline)")
-    print("  Standard:  -3.5%/season  R²=0.41  (moderate decline)")
-    print("  Headliner: +0.7%/season  R²=0.01  (flat)")
+    print(f"\nNAME MODEL COVERAGE")
+    print(f"  Events with ≥2 seasons of name history: {n_history} / {n_total}")
+    print(f"  New events (fallback to Model A):        {n_total - n_history} / {n_total}")
 
     # ── Write output ─────────────────────────────────────────────────────
-    out = fc[['EventName', 'EventClass', 'EventVenue', 'EventGenre', 'EventCapacity',
-              'Actual', 'Pred_A', 'FallbackLevel', 'Pred_B', 'Model_B_Source',
-              'NameSeasons', 'NameWeightedAvg']].copy()
+    out = fc[['EventName', 'EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre',
+              'EventCapacity', 'Actual', 'Pred_A', 'FallbackLevel',
+              'Pred_B', 'Model_B_Source', 'NameSeasons', 'NameWeightedAvg']].copy()
     out['Error_A_Pct'] = ((out['Pred_A'] - out['Actual']) / out['Actual'] * 100).round(1)
     out['Error_B_Pct'] = ((out['Pred_B'] - out['Actual']) / out['Actual'] * 100).round(1)
 

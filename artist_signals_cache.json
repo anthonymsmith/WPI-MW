@@ -1,0 +1,289 @@
+{
+  "yo-yo ma": {
+    "artist_name": "Yo-Yo Ma",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 46776,
+    "fetched_at": "2026-04-18T02:53:47.322268"
+  },
+  "itzhak perlman": {
+    "artist_name": "Itzhak Perlman",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 30015,
+    "fetched_at": "2026-04-18T02:53:47.991815"
+  },
+  "audra mcdonald": {
+    "artist_name": "Audra McDonald",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 27164,
+    "fetched_at": "2026-04-18T02:53:48.640810"
+  },
+  "patti lupone": {
+    "artist_name": "Patti LuPone",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 49605,
+    "fetched_at": "2026-04-18T02:53:49.295909"
+  },
+  "joshua bell": {
+    "artist_name": "Joshua Bell",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 9879,
+    "fetched_at": "2026-04-18T02:53:49.972593"
+  },
+  "wynton marsalis": {
+    "artist_name": "Wynton Marsalis",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 32540,
+    "fetched_at": "2026-04-18T02:53:50.639956"
+  },
+  "midori": {
+    "artist_name": "Midori",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1643,
+    "fetched_at": "2026-04-18T02:53:51.304283"
+  },
+  "branford marsalis": {
+    "artist_name": "Branford Marsalis",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 12323,
+    "fetched_at": "2026-04-18T02:53:51.956863"
+  },
+  "brian stokes mitchell": {
+    "artist_name": "Brian Stokes Mitchell",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 12096,
+    "fetched_at": "2026-04-18T02:53:52.591178"
+  },
+  "simone dinnerstein": {
+    "artist_name": "Simone Dinnerstein",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1610,
+    "fetched_at": "2026-04-18T02:53:53.251018"
+  },
+  "garrick ohlsson": {
+    "artist_name": "Garrick Ohlsson",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1760,
+    "fetched_at": "2026-04-18T02:53:53.878648"
+  },
+  "gil shaham": {
+    "artist_name": "Gil Shaham",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 3574,
+    "fetched_at": "2026-04-18T02:53:54.533456"
+  },
+  "yefim bronfman": {
+    "artist_name": "Yefim Bronfman",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 2508,
+    "fetched_at": "2026-04-18T02:53:55.184373"
+  },
+  "khatia buniatishvili": {
+    "artist_name": "Khatia Buniatishvili",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 8766,
+    "fetched_at": "2026-04-18T02:53:55.823479"
+  },
+  "marc-andre hamelin": {
+    "artist_name": "Marc-Andre Hamelin",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 44,
+    "fetched_at": "2026-04-18T02:53:56.478238"
+  },
+  "john pizzarelli": {
+    "artist_name": "John Pizzarelli",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 2675,
+    "fetched_at": "2026-04-18T02:53:57.140238"
+  },
+  "kyung-wha chung": {
+    "artist_name": "Kyung-Wha Chung",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 37,
+    "fetched_at": "2026-04-18T02:53:57.767756"
+  },
+  "jeremy denk": {
+    "artist_name": "Jeremy Denk",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1212,
+    "fetched_at": "2026-04-18T02:53:58.418589"
+  },
+  "maxim vengerov": {
+    "artist_name": "Maxim Vengerov",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 3761,
+    "fetched_at": "2026-04-18T02:53:59.108221"
+  },
+  "cameron carpenter": {
+    "artist_name": "Cameron Carpenter",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1294,
+    "fetched_at": "2026-04-18T02:53:59.775713"
+  },
+  "emi ferguson": {
+    "artist_name": "Emi Ferguson",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 203,
+    "fetched_at": "2026-04-18T02:54:00.428824"
+  },
+  "natalie macmaster": {
+    "artist_name": "Natalie MacMaster",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 6087,
+    "fetched_at": "2026-04-18T02:54:01.051479"
+  },
+  "bela fleck": {
+    "artist_name": "Bela Fleck",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 379,
+    "fetched_at": "2026-04-18T02:54:01.694491"
+  },
+  "philip glass ensemble": {
+    "artist_name": "Philip Glass Ensemble",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 880,
+    "fetched_at": "2026-04-18T02:58:45.122735"
+  },
+  "ian bostridge": {
+    "artist_name": "Ian Bostridge",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1567,
+    "fetched_at": "2026-04-18T02:58:45.833184"
+  },
+  "jamie barton": {
+    "artist_name": "Jamie Barton",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 65,
+    "fetched_at": "2026-04-18T02:58:46.483143"
+  },
+  "chanticleer": {
+    "artist_name": "Chanticleer",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1091,
+    "fetched_at": "2026-04-18T02:58:47.167638"
+  },
+  "silk road ensemble": {
+    "artist_name": "Silk Road Ensemble",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 209,
+    "fetched_at": "2026-04-18T02:58:47.819563"
+  },
+  "academy of st. martin in the fields": {
+    "artist_name": "Academy of St. Martin in the Fields",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 188,
+    "fetched_at": "2026-04-18T02:58:43.733022"
+  },
+  "orchestre metropolitain": {
+    "artist_name": "Orchestre Metropolitain",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 3,
+    "fetched_at": "2026-04-18T02:58:44.419670"
+  },
+  "orchestre national de france": {
+    "artist_name": "Orchestre National de France",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1008,
+    "fetched_at": "2026-04-18T02:58:42.418124"
+  },
+  "ladysmith black mambazo": {
+    "artist_name": "Ladysmith Black Mambazo",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 9551,
+    "fetched_at": "2026-04-18T02:58:43.031600"
+  },
+  "voces8": {
+    "artist_name": "Voces8",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 5378,
+    "fetched_at": "2026-04-18T02:58:48.474776"
+  },
+  "time for three": {
+    "artist_name": "Time for Three",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 1526,
+    "fetched_at": "2026-04-18T02:58:49.102057"
+  },
+  "hermitage trio": {
+    "artist_name": "Hermitage Trio",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": null,
+    "fetched_at": "2026-04-18T02:58:49.785209"
+  },
+  "tchaikovsky trio": {
+    "artist_name": "Tchaikovsky Trio",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": null,
+    "fetched_at": "2026-04-18T02:58:50.453810"
+  },
+  "daniil trifonov": {
+    "artist_name": "Daniil Trifonov",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 8163,
+    "fetched_at": "2026-04-18T03:00:12.200960"
+  },
+  "brad mehldau": {
+    "artist_name": "Brad Mehldau",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 6274,
+    "fetched_at": "2026-04-18T03:00:12.925522"
+  },
+  "philippe entremont": {
+    "artist_name": "Philippe Entremont",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 773,
+    "fetched_at": "2026-04-18T03:00:13.600899"
+  },
+  "boris yakushev": {
+    "artist_name": "Boris Yakushev",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": null,
+    "fetched_at": "2026-04-18T03:00:14.277049"
+  },
+  "aaron diehl": {
+    "artist_name": "Aaron Diehl",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "wikipedia_monthly_views": 617,
+    "fetched_at": "2026-04-18T03:00:14.966503"
+  }
+}
