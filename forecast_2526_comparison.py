@@ -274,6 +274,7 @@ def main():
     print("=" * 75)
     print_metrics("Model A: Hierarchy (all events)", fc, 'Pred_A')
     print_metrics("Model B: Name history + fallback (all events)", fc, 'Pred_B')
+    print_metrics("Model A + Artist Bayesian adj (all events)", fc, 'Pred_Adj')
     print()
     print_metrics(f"Model A: Hierarchy  (prior-season events only, n={n_history})",
                   fc[has_history], 'Pred_A')
@@ -282,17 +283,17 @@ def main():
 
     # ── Event-level detail ───────────────────────────────────────────────
     print("\nEVENT-LEVEL DETAIL")
-    hdr = f"{'EventName':<45} {'Class':<10} {'SubGenre':<18} {'Actual':>7} {'Pred_A':>7} {'Pred_B':>7} {'Err_A':>7} {'Err_B':>7}  Source"
+    hdr = f"{'EventName':<45} {'Class':<10} {'SubGenre':<18} {'Actual':>7} {'Pred_A':>7} {'Pred_Adj':>8} {'Err_A':>7} {'Err_Adj':>8}  AdjSource"
     print(hdr)
     print("-" * len(hdr))
     for _, row in fc.sort_values(['EventClass', 'EventName']).iterrows():
-        err_a = f"{(row['Pred_A'] - row['Actual']) / row['Actual'] * 100:+.0f}%" if pd.notna(row['Pred_A']) else "N/A"
-        err_b = f"{(row['Pred_B'] - row['Actual']) / row['Actual'] * 100:+.0f}%" if pd.notna(row['Pred_B']) else "N/A"
+        err_a   = f"{(row['Pred_A']   - row['Actual']) / row['Actual'] * 100:+.0f}%" if pd.notna(row['Pred_A']) else "N/A"
+        err_adj = f"{(row['Pred_Adj'] - row['Actual']) / row['Actual'] * 100:+.0f}%" if pd.notna(row.get('Pred_Adj')) else "N/A"
         marker = "★" if row['NameSeasons'] >= 2 else " "
         print(f"{marker}{str(row['EventName']):<44} {str(row['EventClass']):<10} "
               f"{str(row['EventSubGenre']):<18} "
-              f"{row['Actual']:>7.0f} {row['Pred_A']:>7.0f} {row['Pred_B']:>7.0f} "
-              f"{err_a:>7} {err_b:>7}  {row['Model_B_Source']}")
+              f"{row['Actual']:>7.0f} {row['Pred_A']:>7.0f} {row.get('Pred_Adj', float('nan')):>8.0f} "
+              f"{err_a:>7} {err_adj:>8}  {row.get('Adj_Source', '')}")
     print("  ★ = event has ≥2 seasons of prior name history")
 
     # ── Name model coverage ──────────────────────────────────────────────
@@ -303,9 +304,11 @@ def main():
     # ── Write output ─────────────────────────────────────────────────────
     out = fc[['EventName', 'EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre',
               'EventCapacity', 'Actual', 'Pred_A', 'FallbackLevel',
+              'Pred_Adj', 'Pred_Adj_Lo', 'Pred_Adj_Hi', 'Adj_LogFactor', 'Adj_Source',
               'Pred_B', 'Model_B_Source', 'NameSeasons', 'NameWeightedAvg']].copy()
-    out['Error_A_Pct'] = ((out['Pred_A'] - out['Actual']) / out['Actual'] * 100).round(1)
-    out['Error_B_Pct'] = ((out['Pred_B'] - out['Actual']) / out['Actual'] * 100).round(1)
+    out['Error_A_Pct']   = ((out['Pred_A']   - out['Actual']) / out['Actual'] * 100).round(1)
+    out['Error_Adj_Pct'] = ((out['Pred_Adj'] - out['Actual']) / out['Actual'] * 100).round(1)
+    out['Error_B_Pct']   = ((out['Pred_B']   - out['Actual']) / out['Actual'] * 100).round(1)
 
     with pd.ExcelWriter("Forecast_2526_Comparison.xlsx", engine="openpyxl") as writer:
         out.to_excel(writer, sheet_name="2526_Comparison", index=False)
