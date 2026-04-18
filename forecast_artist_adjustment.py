@@ -24,8 +24,6 @@ ARTIST_ADJUSTMENT_ENABLED = True    # flip to False to disable entirely
 SIGNAL_COLS = [
     "log_lastfm_listeners",        # genre-fit adjusted
     "log_wikipedia_monthly_views",
-    "log_spotify_followers",       # None until Spotify creds are set
-    "spotify_popularity",
 ]
 
 # ── Informative priors ─────────────────────────────────────────────────────────
@@ -43,8 +41,6 @@ INFORMED_PRIORS = {
     "intercept":                   (0.00, 0.15),
     "log_lastfm_listeners":        (0.09, 0.07),
     "log_wikipedia_monthly_views": (0.05, 0.04),
-    "log_spotify_followers":       (0.05, 0.04),
-    "spotify_popularity":          (0.003, 0.003),
 }
 NOISE_STD = 0.27   # log-scale residual noise
 
