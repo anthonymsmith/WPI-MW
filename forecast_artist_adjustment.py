@@ -34,6 +34,28 @@ SIGNAL_COLS = [                     # features fed to the regression
     "log_wikipedia_monthly_views",
 ]
 
+# Genre-fit weights: how well an artist's global LFM audience
+# maps to MW's classical/arts subscriber base (1.0 = full signal,
+# 0.0 = global popularity irrelevant to MW draw).
+# Applied as a multiplier on log_lastfm_listeners before regression.
+GENRE_FIT = {
+    "Orchestra":    1.0,
+    "Recital":      1.0,
+    "Chamber":      1.0,
+    "Choral":       0.9,
+    "Organ":        0.9,
+    "Bach Choir":   0.9,
+    "Ballet":       0.8,
+    "Cantata":      0.9,
+    "Jazz":         0.5,
+    "Americana":    0.3,
+    "World":        0.3,
+    "Contemporary": 0.5,
+    "Gospel":       0.3,
+    "Folk":         0.3,
+}
+GENRE_FIT_DEFAULT = 0.7   # fallback for unmapped SubGenres
+
 # For events where the lead artist is not the primary draw signal,
 # map EventName (lowercase, partial match) → artist cache key.
 # Used for orchestra events where the soloist is the real signal.
@@ -66,20 +88,22 @@ def _extract_lead_artist(event_name: str) -> str:
     return event_name.strip()
 
 
-def _build_signal_features(names: pd.Series) -> pd.DataFrame:
+def _build_signal_features(names, subgenres=None):
     """
     Look up cached signals for a series of event names.
+    subgenres: optional Series (same index) of EventSubGenre values for
+               genre-fit weighting of log_lastfm_listeners.
     Returns a DataFrame with SIGNAL_COLS (NaN where not cached).
     """
     try:
-        from artist_signals import get_signals, _load_cache
+        from artist_signals import _load_cache
     except ImportError:
         return pd.DataFrame(index=names.index,
                             columns=SIGNAL_COLS, dtype=float)
 
     cache = _load_cache()
     rows = []
-    for name in names:
+    for idx, name in names.items():
         name_lower = str(name).strip().lower()
         entry = None
 
@@ -94,7 +118,7 @@ def _build_signal_features(names: pd.Series) -> pd.DataFrame:
             lead = _extract_lead_artist(str(name)).strip().lower()
             entry = cache.get(lead)
 
-        # 3. Fuzzy: cache key is substring of lead, or vice versa
+        # 3. Fuzzy: cache key is substring of name, or vice versa
         if entry is None:
             for ck, cv in cache.items():
                 if ck in name_lower or name_lower in ck:
@@ -106,11 +130,17 @@ def _build_signal_features(names: pd.Series) -> pd.DataFrame:
         fol  = entry.get("spotify_followers")
         wiki = entry.get("wikipedia_monthly_views")
         lfm  = entry.get("lastfm_listeners")
+
+        # Genre-fit weight on LFM signal
+        subgenre = str(subgenres.loc[idx]) if subgenres is not None and idx in subgenres.index else ""
+        fit = GENRE_FIT.get(subgenre, GENRE_FIT_DEFAULT)
+        lfm_fitted = lfm * fit if lfm is not None else None
+
         rows.append({
-            "spotify_popularity":          float(sp)           if sp   is not None else np.nan,
-            "log_spotify_followers":       np.log1p(fol)       if fol  is not None else np.nan,
-            "log_lastfm_listeners":        np.log1p(lfm)       if lfm  is not None else np.nan,
-            "log_wikipedia_monthly_views": np.log1p(wiki)      if wiki is not None else np.nan,
+            "spotify_popularity":          float(sp)                if sp          is not None else np.nan,
+            "log_spotify_followers":       np.log1p(fol)            if fol         is not None else np.nan,
+            "log_lastfm_listeners":        np.log1p(lfm_fitted)     if lfm_fitted  is not None else np.nan,
+            "log_wikipedia_monthly_views": np.log1p(wiki)           if wiki        is not None else np.nan,
         })
     return pd.DataFrame(rows, index=names.index)
 
@@ -133,7 +163,8 @@ def _train_adjustment_model(merged: pd.DataFrame, bucket_preds: pd.Series):
     df["bucket_pred"] = bucket_preds
     df = df[df["bucket_pred"] > 0].copy()
 
-    feats = _build_signal_features(df["EventName"])
+    subgenres = df["EventSubGenre"] if "EventSubGenre" in df.columns else None
+    feats = _build_signal_features(df["EventName"], subgenres=subgenres)
     df = pd.concat([df, feats], axis=1)
 
     # Keep rows with at least one valid signal and a real actual
@@ -221,7 +252,8 @@ def apply_artist_adjustment(
     model, scaler, feature_cols = trained
 
     # ── Prediction ────────────────────────────────────────────────────────
-    feats = _build_signal_features(result["EventName"])
+    subgenres = result["EventSubGenre"] if "EventSubGenre" in result.columns else None
+    feats = _build_signal_features(result["EventName"], subgenres=subgenres)
     alpha = 1.0 - ci_pct
     z = _normal_ppf(1 - alpha / 2)          # e.g. 1.645 for 90% CI
 

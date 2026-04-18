@@ -367,5 +367,14 @@
     "lastfm_playcount": 204477,
     "wikipedia_monthly_views": 617,
     "fetched_at": "2026-04-18T05:30:35.416061"
+  },
+  "sam bush": {
+    "artist_name": "Sam Bush",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "lastfm_listeners": 68561,
+    "lastfm_playcount": 482393,
+    "wikipedia_monthly_views": 4175,
+    "fetched_at": "2026-04-18T05:39:55.570963"
   }
 }
