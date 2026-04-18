@@ -1,15 +1,14 @@
 """
 Artist popularity signal lookup with local JSON cache.
 
-Fetches from Spotify and Wikipedia APIs; caches results so API is only
-called once per artist. All lookups gracefully return None on failure
-so the adjustment layer can fall back to the bucket prior.
+Fetches from Last.fm, Spotify (optional), and Wikipedia APIs.
+Caches results so APIs are only called once per artist.
+All lookups gracefully return None on failure so the adjustment
+layer can fall back to the bucket prior.
 
-Requires environment variables (or .env file):
-  SPOTIFY_CLIENT_ID
-  SPOTIFY_CLIENT_SECRET
-
-Wikipedia requires no auth.
+Last.fm: set LASTFM_API_KEY (or hardcoded below).
+Spotify: optional — set SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET.
+Wikipedia: no auth required.
 """
 
 import calendar
@@ -22,6 +21,8 @@ from datetime import datetime, timedelta
 
 CACHE_FILE = Path(__file__).parent / "artist_signals_cache.json"
 CACHE_MAX_AGE_DAYS = 90   # re-fetch after 90 days
+
+LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY", "012c83319a3bcb27dd1420020a83ec55")
 
 
 def _load_cache():
@@ -86,6 +87,28 @@ def _spotify_lookup(artist_name, token):
         return None
 
 
+# ── Last.fm ──────────────────────────────────────────────────────────────────
+
+def _lastfm_lookup(artist_name):
+    """Return {lastfm_listeners: int, lastfm_playcount: int} or None."""
+    if not LASTFM_API_KEY:
+        return None
+    try:
+        resp = requests.get(
+            "https://ws.audioscrobbler.com/2.0/",
+            params={"method": "artist.getinfo", "artist": artist_name,
+                    "api_key": LASTFM_API_KEY, "format": "json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        stats = resp.json().get("artist", {}).get("stats", {})
+        listeners = int(stats.get("listeners", 0))
+        playcount = int(stats.get("playcount", 0))
+        return {"lastfm_listeners": listeners, "lastfm_playcount": playcount} if listeners else None
+    except Exception:
+        return None
+
+
 # ── Wikipedia ────────────────────────────────────────────────────────────────
 
 def _wikipedia_pageviews(artist_name):
@@ -139,15 +162,22 @@ def get_signals(artist_name, force_refresh=False):
     if not force_refresh and key in cache and _cache_fresh(cache[key]):
         return cache[key]
 
-    signals: dict = {
+    signals = {
         "artist_name": artist_name,
         "spotify_popularity": None,
         "spotify_followers": None,
+        "lastfm_listeners": None,
+        "lastfm_playcount": None,
         "wikipedia_monthly_views": None,
         "fetched_at": datetime.utcnow().isoformat(),
     }
 
-    # Spotify
+    # Last.fm
+    lfm = _lastfm_lookup(artist_name)
+    if lfm:
+        signals.update(lfm)
+
+    # Spotify (optional)
     token = _spotify_token()
     if token:
         sp = _spotify_lookup(artist_name, token)
@@ -185,16 +215,18 @@ def cache_summary() -> None:
     if not cache:
         print("Cache is empty.")
         return
-    print(f"{'Artist':<50} {'Spotify':>8} {'Followers':>10} {'Wiki/mo':>10}  {'Fetched'}")
-    print("-" * 95)
+    print(f"{'Artist':<50} {'Spotify':>8} {'Followers':>10} {'LFM List':>10} {'Wiki/mo':>10}  {'Fetched'}")
+    print("-" * 107)
     for entry in sorted(cache.values(), key=lambda x: x.get("artist_name", "")):
         sp  = entry.get("spotify_popularity", "–")
         fol = entry.get("spotify_followers")
+        lfm = entry.get("lastfm_listeners")
         wv  = entry.get("wikipedia_monthly_views")
         ts  = entry.get("fetched_at", "")[:10]
         fol_s = f"{fol:,}" if fol else "–"
+        lfm_s = f"{lfm:,}" if lfm else "–"
         wv_s  = f"{wv:,}" if wv else "–"
-        print(f"{entry.get('artist_name',''):<50} {str(sp):>8} {fol_s:>10} {wv_s:>10}  {ts}")
+        print(f"{entry.get('artist_name',''):<50} {str(sp):>8} {fol_s:>10} {lfm_s:>10} {wv_s:>10}  {ts}")
 
 
 if __name__ == "__main__":

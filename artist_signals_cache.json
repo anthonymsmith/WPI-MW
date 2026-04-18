@@ -3,287 +3,369 @@
     "artist_name": "Yo-Yo Ma",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 46776,
-    "fetched_at": "2026-04-18T02:53:47.322268"
+    "lastfm_listeners": 502771,
+    "lastfm_playcount": 8927982,
+    "wikipedia_monthly_views": 47634,
+    "fetched_at": "2026-04-18T05:31:10.926683"
   },
   "itzhak perlman": {
     "artist_name": "Itzhak Perlman",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 30015,
-    "fetched_at": "2026-04-18T02:53:47.991815"
+    "lastfm_listeners": 207698,
+    "lastfm_playcount": 2671726,
+    "wikipedia_monthly_views": 31025,
+    "fetched_at": "2026-04-18T05:30:49.522896"
   },
   "audra mcdonald": {
     "artist_name": "Audra McDonald",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 27164,
-    "fetched_at": "2026-04-18T02:53:48.640810"
+    "lastfm_listeners": 63720,
+    "lastfm_playcount": 503815,
+    "wikipedia_monthly_views": 31039,
+    "fetched_at": "2026-04-18T05:30:37.294411"
   },
   "patti lupone": {
     "artist_name": "Patti LuPone",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 49605,
-    "fetched_at": "2026-04-18T02:53:49.295909"
+    "lastfm_listeners": 92057,
+    "lastfm_playcount": 961304,
+    "wikipedia_monthly_views": 47145,
+    "fetched_at": "2026-04-18T05:31:02.169914"
   },
   "joshua bell": {
     "artist_name": "Joshua Bell",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 9879,
-    "fetched_at": "2026-04-18T02:53:49.972593"
+    "lastfm_listeners": 149712,
+    "lastfm_playcount": 1252231,
+    "wikipedia_monthly_views": 15077,
+    "fetched_at": "2026-04-18T05:30:53.058482"
   },
   "wynton marsalis": {
     "artist_name": "Wynton Marsalis",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 32540,
-    "fetched_at": "2026-04-18T02:53:50.639956"
+    "lastfm_listeners": 465215,
+    "lastfm_playcount": 4103012,
+    "wikipedia_monthly_views": 22952,
+    "fetched_at": "2026-04-18T05:31:09.203307"
   },
   "midori": {
     "artist_name": "Midori",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 1643,
-    "fetched_at": "2026-04-18T02:53:51.304283"
+    "lastfm_listeners": 67555,
+    "lastfm_playcount": 1114065,
+    "wikipedia_monthly_views": 2011,
+    "fetched_at": "2026-04-18T05:30:58.169528"
   },
   "branford marsalis": {
     "artist_name": "Branford Marsalis",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 12323,
-    "fetched_at": "2026-04-18T02:53:51.956863"
+    "lastfm_listeners": 112297,
+    "lastfm_playcount": 715016,
+    "wikipedia_monthly_views": 12104,
+    "fetched_at": "2026-04-18T05:30:40.762589"
   },
   "brian stokes mitchell": {
     "artist_name": "Brian Stokes Mitchell",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 12096,
-    "fetched_at": "2026-04-18T02:53:52.591178"
+    "lastfm_listeners": 58881,
+    "lastfm_playcount": 498652,
+    "wikipedia_monthly_views": 13545,
+    "fetched_at": "2026-04-18T05:30:41.617241"
   },
   "simone dinnerstein": {
     "artist_name": "Simone Dinnerstein",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 1610,
-    "fetched_at": "2026-04-18T02:53:53.251018"
+    "lastfm_listeners": 23909,
+    "lastfm_playcount": 421540,
+    "wikipedia_monthly_views": 2117,
+    "fetched_at": "2026-04-18T05:31:05.762594"
   },
   "garrick ohlsson": {
     "artist_name": "Garrick Ohlsson",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 1760,
-    "fetched_at": "2026-04-18T02:53:53.878648"
+    "lastfm_listeners": 13729,
+    "lastfm_playcount": 303557,
+    "wikipedia_monthly_views": 1928,
+    "fetched_at": "2026-04-18T05:30:46.119150"
   },
   "gil shaham": {
     "artist_name": "Gil Shaham",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 3574,
-    "fetched_at": "2026-04-18T02:53:54.533456"
+    "lastfm_listeners": 14831,
+    "lastfm_playcount": 104187,
+    "wikipedia_monthly_views": 3359,
+    "fetched_at": "2026-04-18T05:30:46.996901"
   },
   "yefim bronfman": {
     "artist_name": "Yefim Bronfman",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 2508,
-    "fetched_at": "2026-04-18T02:53:55.184373"
+    "lastfm_listeners": 8368,
+    "lastfm_playcount": 52617,
+    "wikipedia_monthly_views": 2244,
+    "fetched_at": "2026-04-18T05:31:10.061526"
   },
   "khatia buniatishvili": {
     "artist_name": "Khatia Buniatishvili",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 8766,
-    "fetched_at": "2026-04-18T02:53:55.823479"
+    "lastfm_listeners": 33393,
+    "lastfm_playcount": 290944,
+    "wikipedia_monthly_views": 10212,
+    "fetched_at": "2026-04-18T05:30:53.935074"
   },
   "marc-andre hamelin": {
     "artist_name": "Marc-Andre Hamelin",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 44,
-    "fetched_at": "2026-04-18T02:53:56.478238"
+    "lastfm_listeners": 6864,
+    "lastfm_playcount": 70954,
+    "wikipedia_monthly_views": 63,
+    "fetched_at": "2026-04-18T05:30:56.509746"
   },
   "john pizzarelli": {
     "artist_name": "John Pizzarelli",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 2675,
-    "fetched_at": "2026-04-18T02:53:57.140238"
+    "lastfm_listeners": 85884,
+    "lastfm_playcount": 840883,
+    "wikipedia_monthly_views": 2957,
+    "fetched_at": "2026-04-18T05:30:52.179787"
   },
   "kyung-wha chung": {
     "artist_name": "Kyung-Wha Chung",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 37,
-    "fetched_at": "2026-04-18T02:53:57.767756"
+    "lastfm_listeners": 3313,
+    "lastfm_playcount": 42977,
+    "wikipedia_monthly_views": 51,
+    "fetched_at": "2026-04-18T05:30:54.792734"
   },
   "jeremy denk": {
     "artist_name": "Jeremy Denk",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 1212,
-    "fetched_at": "2026-04-18T02:53:58.418589"
+    "lastfm_listeners": 6465,
+    "lastfm_playcount": 81939,
+    "wikipedia_monthly_views": 1099,
+    "fetched_at": "2026-04-18T05:30:51.302659"
   },
   "maxim vengerov": {
     "artist_name": "Maxim Vengerov",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 3761,
-    "fetched_at": "2026-04-18T02:53:59.108221"
+    "lastfm_listeners": 38441,
+    "lastfm_playcount": 206284,
+    "wikipedia_monthly_views": 4057,
+    "fetched_at": "2026-04-18T05:30:57.327741"
   },
   "cameron carpenter": {
     "artist_name": "Cameron Carpenter",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 1294,
-    "fetched_at": "2026-04-18T02:53:59.775713"
+    "lastfm_listeners": 4747,
+    "lastfm_playcount": 38860,
+    "wikipedia_monthly_views": 1232,
+    "fetched_at": "2026-04-18T05:30:42.502077"
   },
   "emi ferguson": {
     "artist_name": "Emi Ferguson",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 203,
-    "fetched_at": "2026-04-18T02:54:00.428824"
+    "lastfm_listeners": 147,
+    "lastfm_playcount": 932,
+    "wikipedia_monthly_views": 259,
+    "fetched_at": "2026-04-18T05:30:45.095413"
   },
   "natalie macmaster": {
     "artist_name": "Natalie MacMaster",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 6087,
-    "fetched_at": "2026-04-18T02:54:01.051479"
+    "lastfm_listeners": 65024,
+    "lastfm_playcount": 545341,
+    "wikipedia_monthly_views": 6097,
+    "fetched_at": "2026-04-18T05:30:59.020997"
   },
   "bela fleck": {
     "artist_name": "Bela Fleck",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 379,
-    "fetched_at": "2026-04-18T02:54:01.694491"
+    "lastfm_listeners": 14856,
+    "lastfm_playcount": 265006,
+    "wikipedia_monthly_views": 431,
+    "fetched_at": "2026-04-18T05:30:38.184387"
   },
   "philip glass ensemble": {
     "artist_name": "Philip Glass Ensemble",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 80967,
+    "lastfm_playcount": 769667,
     "wikipedia_monthly_views": 880,
-    "fetched_at": "2026-04-18T02:58:45.122735"
+    "fetched_at": "2026-04-18T05:31:03.032034"
   },
   "ian bostridge": {
     "artist_name": "Ian Bostridge",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 15061,
+    "lastfm_playcount": 151490,
     "wikipedia_monthly_views": 1567,
-    "fetched_at": "2026-04-18T02:58:45.833184"
+    "fetched_at": "2026-04-18T05:30:48.669842"
   },
   "jamie barton": {
     "artist_name": "Jamie Barton",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 108,
+    "lastfm_playcount": 575,
     "wikipedia_monthly_views": 65,
-    "fetched_at": "2026-04-18T02:58:46.483143"
+    "fetched_at": "2026-04-18T05:30:50.424292"
   },
   "chanticleer": {
     "artist_name": "Chanticleer",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 61287,
+    "lastfm_playcount": 616985,
     "wikipedia_monthly_views": 1091,
-    "fetched_at": "2026-04-18T02:58:47.167638"
+    "fetched_at": "2026-04-18T05:30:43.363112"
   },
   "silk road ensemble": {
     "artist_name": "Silk Road Ensemble",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 1176,
+    "lastfm_playcount": 15366,
     "wikipedia_monthly_views": 209,
-    "fetched_at": "2026-04-18T02:58:47.819563"
+    "fetched_at": "2026-04-18T05:31:04.836903"
   },
   "academy of st. martin in the fields": {
     "artist_name": "Academy of St. Martin in the Fields",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 132285,
+    "lastfm_playcount": 831193,
     "wikipedia_monthly_views": 188,
-    "fetched_at": "2026-04-18T02:58:43.733022"
+    "fetched_at": "2026-04-18T05:30:36.387000"
   },
   "orchestre metropolitain": {
     "artist_name": "Orchestre Metropolitain",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 253,
+    "lastfm_playcount": 1169,
     "wikipedia_monthly_views": 3,
-    "fetched_at": "2026-04-18T02:58:44.419670"
+    "fetched_at": "2026-04-18T05:31:00.318490"
   },
   "orchestre national de france": {
     "artist_name": "Orchestre National de France",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 7121,
+    "lastfm_playcount": 33246,
     "wikipedia_monthly_views": 1008,
-    "fetched_at": "2026-04-18T02:58:42.418124"
+    "fetched_at": "2026-04-18T05:31:01.179180"
   },
   "ladysmith black mambazo": {
     "artist_name": "Ladysmith Black Mambazo",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 154498,
+    "lastfm_playcount": 1605501,
     "wikipedia_monthly_views": 9551,
-    "fetched_at": "2026-04-18T02:58:43.031600"
+    "fetched_at": "2026-04-18T05:30:55.648323"
   },
   "voces8": {
     "artist_name": "Voces8",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 5378,
-    "fetched_at": "2026-04-18T02:58:48.474776"
+    "lastfm_listeners": 28946,
+    "lastfm_playcount": 262581,
+    "wikipedia_monthly_views": 4678,
+    "fetched_at": "2026-04-18T05:31:08.394704"
   },
   "time for three": {
     "artist_name": "Time for Three",
     "spotify_popularity": null,
     "spotify_followers": null,
-    "wikipedia_monthly_views": 1526,
-    "fetched_at": "2026-04-18T02:58:49.102057"
+    "lastfm_listeners": 18209,
+    "lastfm_playcount": 103784,
+    "wikipedia_monthly_views": 1587,
+    "fetched_at": "2026-04-18T05:31:07.537375"
   },
   "hermitage trio": {
     "artist_name": "Hermitage Trio",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": null,
+    "lastfm_playcount": null,
     "wikipedia_monthly_views": null,
-    "fetched_at": "2026-04-18T02:58:49.785209"
+    "fetched_at": "2026-04-18T05:30:47.845849"
   },
   "tchaikovsky trio": {
     "artist_name": "Tchaikovsky Trio",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 90,
+    "lastfm_playcount": 549,
     "wikipedia_monthly_views": null,
-    "fetched_at": "2026-04-18T02:58:50.453810"
+    "fetched_at": "2026-04-18T05:31:06.620168"
   },
   "daniil trifonov": {
     "artist_name": "Daniil Trifonov",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 31736,
+    "lastfm_playcount": 337431,
     "wikipedia_monthly_views": 8163,
-    "fetched_at": "2026-04-18T03:00:12.200960"
+    "fetched_at": "2026-04-18T05:30:44.203103"
   },
   "brad mehldau": {
     "artist_name": "Brad Mehldau",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 459236,
+    "lastfm_playcount": 6769993,
     "wikipedia_monthly_views": 6274,
-    "fetched_at": "2026-04-18T03:00:12.925522"
+    "fetched_at": "2026-04-18T05:30:39.882030"
   },
   "philippe entremont": {
     "artist_name": "Philippe Entremont",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 33861,
+    "lastfm_playcount": 232032,
     "wikipedia_monthly_views": 773,
-    "fetched_at": "2026-04-18T03:00:13.600899"
+    "fetched_at": "2026-04-18T05:31:03.908370"
   },
   "boris yakushev": {
     "artist_name": "Boris Yakushev",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": null,
+    "lastfm_playcount": null,
     "wikipedia_monthly_views": null,
-    "fetched_at": "2026-04-18T03:00:14.277049"
+    "fetched_at": "2026-04-18T05:30:39.035935"
   },
   "aaron diehl": {
     "artist_name": "Aaron Diehl",
     "spotify_popularity": null,
     "spotify_followers": null,
+    "lastfm_listeners": 14361,
+    "lastfm_playcount": 204477,
     "wikipedia_monthly_views": 617,
-    "fetched_at": "2026-04-18T03:00:14.966503"
+    "fetched_at": "2026-04-18T05:30:35.416061"
   }
 }

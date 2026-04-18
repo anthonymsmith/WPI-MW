@@ -30,6 +30,7 @@ MIN_TRAINING_EVENTS = 15            # minimum labelled history before adjusting
 SIGNAL_COLS = [                     # features fed to the regression
     "spotify_popularity",
     "log_spotify_followers",
+    "log_lastfm_listeners",
     "log_wikipedia_monthly_views",
 ]
 
@@ -104,9 +105,11 @@ def _build_signal_features(names: pd.Series) -> pd.DataFrame:
         sp   = entry.get("spotify_popularity")
         fol  = entry.get("spotify_followers")
         wiki = entry.get("wikipedia_monthly_views")
+        lfm  = entry.get("lastfm_listeners")
         rows.append({
-            "spotify_popularity":         float(sp)            if sp   is not None else np.nan,
-            "log_spotify_followers":      np.log1p(fol)        if fol  is not None else np.nan,
+            "spotify_popularity":          float(sp)           if sp   is not None else np.nan,
+            "log_spotify_followers":       np.log1p(fol)       if fol  is not None else np.nan,
+            "log_lastfm_listeners":        np.log1p(lfm)       if lfm  is not None else np.nan,
             "log_wikipedia_monthly_views": np.log1p(wiki)      if wiki is not None else np.nan,
         })
     return pd.DataFrame(rows, index=names.index)
@@ -227,7 +230,7 @@ def apply_artist_adjustment(
         if pd.isna(base) or base <= 0:
             continue
 
-        feat_row = feats.loc[idx, feature_cols] if idx in feats.index else pd.Series(dtype=float)
+        feat_row = feats.loc[idx, [c for c in feature_cols if c in feats.columns]] if idx in feats.index else pd.Series(dtype=float)
         has_any = feat_row.notna().any()
 
         if not has_any:
