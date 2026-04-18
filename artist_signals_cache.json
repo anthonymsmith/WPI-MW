@@ -311,7 +311,7 @@
     "spotify_followers": null,
     "lastfm_listeners": null,
     "lastfm_playcount": null,
-    "wikipedia_monthly_views": null,
+    "wikipedia_monthly_views": 0,
     "fetched_at": "2026-04-18T05:30:47.845849"
   },
   "tchaikovsky trio": {
@@ -320,7 +320,7 @@
     "spotify_followers": null,
     "lastfm_listeners": 90,
     "lastfm_playcount": 549,
-    "wikipedia_monthly_views": null,
+    "wikipedia_monthly_views": 0,
     "fetched_at": "2026-04-18T05:31:06.620168"
   },
   "daniil trifonov": {
@@ -356,7 +356,7 @@
     "spotify_followers": null,
     "lastfm_listeners": null,
     "lastfm_playcount": null,
-    "wikipedia_monthly_views": null,
+    "wikipedia_monthly_views": 0,
     "fetched_at": "2026-04-18T05:30:39.035935"
   },
   "aaron diehl": {
@@ -376,5 +376,32 @@
     "lastfm_playcount": 482393,
     "wikipedia_monthly_views": 4175,
     "fetched_at": "2026-04-18T05:39:55.570963"
+  },
+  "dance theater of harlem": {
+    "artist_name": "Dance Theater of Harlem",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "lastfm_listeners": null,
+    "lastfm_playcount": null,
+    "wikipedia_monthly_views": 105,
+    "fetched_at": "2026-04-18T19:09:24.256558"
+  },
+  "rhiannon giddens": {
+    "artist_name": "Rhiannon Giddens",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "lastfm_listeners": 235653,
+    "lastfm_playcount": 1994761,
+    "wikipedia_monthly_views": 19323,
+    "fetched_at": "2026-04-18T19:09:25.424948"
+  },
+  "zlatomir fung": {
+    "artist_name": "Zlatomir Fung",
+    "spotify_popularity": null,
+    "spotify_followers": null,
+    "lastfm_listeners": 32,
+    "lastfm_playcount": 62,
+    "wikipedia_monthly_views": 0,
+    "fetched_at": "2026-04-18T19:09:26.593190"
   }
 }

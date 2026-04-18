@@ -112,8 +112,10 @@ def _lastfm_lookup(artist_name):
 # ── Wikipedia ────────────────────────────────────────────────────────────────
 
 def _wikipedia_pageviews(artist_name):
-    """Return average monthly page views (last 3 months) or None."""
-    # Normalise name to Wikipedia title format
+    """
+    Return average monthly page views (last 3 months), 0 if no Wikipedia page,
+    or None if the fetch failed (caller should not cache None — retry later).
+    """
     title = artist_name.replace(" ", "_")
     end = datetime.utcnow().replace(day=1)
     month_ranges = []
@@ -125,21 +127,30 @@ def _wikipedia_pageviews(artist_name):
         end = end.replace(day=1)
 
     views = []
+    fetch_errors = 0
+    not_found = 0
     for ym_start, ym_end in month_ranges:
         url = (f"https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/"
                f"en.wikipedia.org/all-access/all-agents/{title}/monthly/{ym_start}/{ym_end}")
         try:
-            resp = requests.get(url, timeout=10,
+            resp = requests.get(url, timeout=15,
                                 headers={"User-Agent": "MW-forecast/1.0"})
             if resp.status_code == 200:
                 items = resp.json().get("items", [])
                 if items:
                     views.append(items[0].get("views", 0))
-            time.sleep(0.1)   # be polite to Wikimedia
+            elif resp.status_code == 404:
+                not_found += 1   # article doesn't exist
+            time.sleep(0.2)      # polite to Wikimedia
         except Exception:
-            pass
+            fetch_errors += 1
 
-    return int(sum(views) / len(views)) if views else None
+    if views:
+        return int(sum(views) / len(views))
+    if not_found == 3:
+        return 0    # confirmed no Wikipedia page — cache as 0, don't retry
+    if fetch_errors > 0:
+        return None  # transient failure — caller should not cache this
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -160,6 +171,14 @@ def get_signals(artist_name, force_refresh=False):
     key = artist_name.strip().lower()
 
     if not force_refresh and key in cache and _cache_fresh(cache[key]):
+        entry = cache[key]
+        # If cache is fresh but wiki was never successfully fetched, retry wiki only
+        if entry.get("wikipedia_monthly_views") is None:
+            wiki = _wikipedia_pageviews(artist_name)
+            if wiki is not None:   # 0 = confirmed no page; positive = got views
+                entry["wikipedia_monthly_views"] = wiki
+                cache[key] = entry
+                _save_cache(cache)
         return cache[key]
 
     signals = {
@@ -184,7 +203,7 @@ def get_signals(artist_name, force_refresh=False):
         if sp:
             signals.update(sp)
 
-    # Wikipedia
+    # Wikipedia — only store if fetch succeeded (None = transient failure, don't cache)
     wiki = _wikipedia_pageviews(artist_name)
     if wiki is not None:
         signals["wikipedia_monthly_views"] = wiki

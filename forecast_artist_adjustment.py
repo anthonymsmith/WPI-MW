@@ -76,6 +76,11 @@ EVENT_TO_ARTIST = {
     "asmf & denk":                    "jeremy denk",
     "dinnerstein & orchestra":        "simone dinnerstein",
     "midori & festival strings":      "midori",
+    # new entries — fix missing signals for top positive surprises
+    "yo-yo ma":                       "yo-yo ma",
+    "macmaster":                      "natalie macmaster",
+    "silkroad":                       "silk road ensemble",
+    "dance theater of harlem":        "dance theater of harlem",
 }
 
 
