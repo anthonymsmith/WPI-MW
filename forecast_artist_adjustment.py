@@ -33,16 +33,29 @@ SIGNAL_COLS = [
 #   Yo-Yo Ma  (LFM 503K, log=13.1) → typically ~1.5-1.7x bucket
 #   Emi Ferguson (LFM 147, log=5.0) → typically ~0.75x bucket
 #   Implied β_lfm ≈ log(1.6/0.77) / (13.1-5.0) ≈ 0.09
-#   Prior std generous (0.07) so data can pull it in either direction.
 #
-# intercept: expect no systematic bias from signals alone.
+# Prior std is TIGHT (0.015, 0.010) — with only ~47 labelled obs and small
+# within-bucket LFM variation, we're explicitly in the prior-dominated regime.
+# Data can pull β toward 0 over many seasons, but not drag it there in one shot.
+# Features are centered on training medians (see _build_model) so β acts on
+# within-training deviation, not absolute log-listener counts.
+#
+# intercept: expect no systematic bias from signals alone (centered features).
 # noise_std:  log-scale residual ≈ our observed ~27% WAPE → log(1.27)≈0.24
 INFORMED_PRIORS = {
-    "intercept":                   (0.00, 0.15),
-    "log_lastfm_listeners":        (0.09, 0.07),
-    "log_wikipedia_monthly_views": (0.05, 0.04),
+    "intercept":                   (0.00, 0.10),
+    "log_lastfm_listeners":        (0.09, 0.015),
+    "log_wikipedia_monthly_views": (0.05, 0.010),
 }
 NOISE_STD = 0.27   # log-scale residual noise
+
+# Cold-start centers used when no training history is available.
+# Rough medians from the cache: typical classical artist ~log(8000)≈9.0 LFM,
+# ~log(400)≈6.0 monthly Wikipedia views.
+DEFAULT_CENTERS = {
+    "log_lastfm_listeners":        9.0,
+    "log_wikipedia_monthly_views": 6.0,
+}
 
 # ── Genre-fit weights ──────────────────────────────────────────────────────────
 # Discounts LFM signal where global audience ≠ MW classical subscriber base.
@@ -224,14 +237,22 @@ def _build_model(merged_history, actuals_history, bucket_preds_history):
     """
     Construct an InformedBayesianRegressor and update it with labelled history.
     Always returns a model (prior-only if no usable training data).
+
+    Returns (model, active_sigs, impute, centers). Features are centered on
+    training medians before fitting so β priors act on within-training
+    deviation, not absolute log-signal levels — otherwise the intercept has
+    to fight β×mean(feature) and the posterior collapses β toward 0.
     """
     # Determine which signal columns are actually present in the cache
     active_sigs = ["intercept"] + [c for c in SIGNAL_COLS
                                    if c in INFORMED_PRIORS]
-    model = InformedBayesianRegressor(active_sigs, INFORMED_PRIORS, NOISE_STD)
+    model    = InformedBayesianRegressor(active_sigs, INFORMED_PRIORS, NOISE_STD)
+    sig_cols = [c for c in active_sigs if c != "intercept"]
+    # Imputation in centered space is 0 (= median - median)
+    zero_impute = {c: 0.0 for c in sig_cols}
 
     if merged_history is None or actuals_history is None or bucket_preds_history is None:
-        return model, active_sigs, {}
+        return model, active_sigs, zero_impute, dict(DEFAULT_CENTERS)
 
     df = merged_history.copy()
     df["Actual"]      = actuals_history.values
@@ -243,21 +264,24 @@ def _build_model(merged_history, actuals_history, bucket_preds_history):
     for col in feats.columns:
         df[col] = feats[col].values
 
-    sig_cols  = [c for c in active_sigs if c != "intercept"]
     has_signal = df[sig_cols].notna().any(axis=1)
     train      = df[has_signal].copy()
 
     if train.empty:
-        return model, active_sigs, {}
+        return model, active_sigs, zero_impute, dict(DEFAULT_CENTERS)
 
-    # Impute missing signals with training medians
-    impute = {c: float(train[c].median()) for c in sig_cols if c in train.columns}
+    # Training-median centers; features are subtracted before fitting so β
+    # applies to "how much above/below a typical trained artist," not absolute log.
+    centers = {c: float(train[c].median()) for c in sig_cols if c in train.columns}
+    for c in sig_cols:
+        if c in train.columns:
+            train[c] = train[c] - centers[c]
 
     rows = []
     ys   = []
     for _, row in train.iterrows():
         feat_row = row[sig_cols] if all(c in row.index for c in sig_cols) else pd.Series(dtype=float)
-        x = _make_feature_vector(feat_row, active_sigs, impute)
+        x = _make_feature_vector(feat_row, active_sigs, zero_impute)
         y = np.log(row["Actual"] / row["bucket_pred"])
         if np.isfinite(y) and np.isfinite(x).all():
             rows.append(x)
@@ -266,7 +290,7 @@ def _build_model(merged_history, actuals_history, bucket_preds_history):
     if rows:
         model.update(np.array(rows), np.array(ys))
 
-    return model, active_sigs, impute
+    return model, active_sigs, zero_impute, centers
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -297,7 +321,7 @@ def apply_artist_adjustment(
     if not ARTIST_ADJUSTMENT_ENABLED:
         return result
 
-    model, feature_cols, impute = _build_model(
+    model, feature_cols, impute, centers = _build_model(
         merged_history, actuals_history, bucket_preds_history
     )
 
@@ -312,12 +336,16 @@ def apply_artist_adjustment(
         if pd.isna(base) or base <= 0:
             continue
 
-        feat_row  = feats.loc[idx] if idx in feats.index else pd.Series(dtype=float)
+        feat_row  = feats.loc[idx].copy() if idx in feats.index else pd.Series(dtype=float)
         has_signal = feat_row[sig_cols].notna().any() if sig_cols else False
 
         if not has_signal:
             result.at[idx, "Adj_Source"] = "Fallback (no signal)"
             continue
+
+        for c in sig_cols:
+            if c in feat_row.index and pd.notna(feat_row[c]):
+                feat_row[c] = feat_row[c] - centers.get(c, 0.0)
 
         x_vec   = _make_feature_vector(feat_row, feature_cols, impute)
         log_adj, log_std = model.predict(x_vec)
