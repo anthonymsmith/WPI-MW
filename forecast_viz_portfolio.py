@@ -64,7 +64,9 @@ def load():
 
 
 def load_2526_partial():
-    """13 events with complete ticket data (EventDate ≤ Dec 21 2025)."""
+    """12 events with reliable actuals (EventDate ≤ Dec 11 2025).
+    Matches the 2024-12-11 SF export cutoff; post-Dec-11 rows show only
+    advance ticket sales as 'actuals' and are excluded."""
     comp = pd.read_excel('Forecast_2526_Comparison.xlsx', sheet_name='2526_Comparison')
     em   = pd.read_excel('EventManifest.xlsx', sheet_name='EventManifest')
 
@@ -72,7 +74,7 @@ def load_2526_partial():
     dates['EventDate'] = pd.to_datetime(dates['EventDate'], errors='coerce')
 
     comp = comp.merge(dates, on='EventName', how='left')
-    cutoff = pd.Timestamp('2025-12-21')
+    cutoff = pd.Timestamp('2025-12-11')
     rel = comp[comp['EventDate'] <= cutoff].copy()
 
     rel['AbsPct']    = (rel['Pred_A'] - rel['Actual']).abs() / rel['Actual'] * 100
