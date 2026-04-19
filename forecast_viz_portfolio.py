@@ -5,7 +5,7 @@ No event names, venue names, or organization identifiers.
 Output files:
   forecast_portfolio_scatter.png    (3-panel scatter by season)
   forecast_portfolio_accuracy.png   (MAPE + bias by season, incl. 25-26 partial)
-  forecast_portfolio_class.png      (MAPE + bias by event type, ex-Prestige)
+  forecast_portfolio_class.png      (MAPE + bias by event type, last 3 seasons)
   forecast_portfolio_combined.png   (combined layout)
 """
 
@@ -63,10 +63,11 @@ def load():
     return df
 
 
-def load_2526_partial():
-    """12 events with reliable actuals (EventDate ≤ Dec 11 2025).
+def _load_2526_events():
+    """Per-event 25-26 rows with reliable actuals (EventDate ≤ Dec 11 2025).
     Matches the 2024-12-11 SF export cutoff; post-Dec-11 rows show only
-    advance ticket sales as 'actuals' and are excluded."""
+    advance ticket sales as 'actuals' and are excluded.
+    Returns DataFrame with columns aligned to honest-eval schema."""
     comp = pd.read_excel('Forecast_2526_Comparison.xlsx', sheet_name='2526_Comparison')
     em   = pd.read_excel('EventManifest.xlsx', sheet_name='EventManifest')
 
@@ -79,7 +80,17 @@ def load_2526_partial():
 
     rel['AbsPct']    = (rel['Pred_Adj'] - rel['Actual']).abs() / rel['Actual'] * 100
     rel['SignedPct'] = (rel['Pred_Adj'] - rel['Actual'])       / rel['Actual'] * 100
+    rel['Season']    = '25-26'
+    rel['SeasonLabel'] = "'25–26*"
+    rel = rel.rename(columns={
+        'Pred_Adj': 'PredictedAttendance',
+        'Actual':   'ActualAttendance',
+    })
+    return rel
 
+
+def load_2526_partial():
+    rel = _load_2526_events()
     return {
         'season':  "'25–26*",
         'MAPE':    rel['AbsPct'].mean(),
@@ -226,7 +237,7 @@ def plot_season_accuracy(sm, ax):
                ylabel='MAPE (%)', pct_y=True)
 
 
-# ── Chart 3: MAPE + bias by event type (ex-Prestige) ──────────────────────
+# ── Chart 3: MAPE + bias by event type (last 3 seasons) ───────────────────
 def plot_class_mape(cm, ax):
     colors = [CLASS_COLORS.get(c, DGRAY) for c in cm['Class']]
     y = np.arange(len(cm))
@@ -240,7 +251,8 @@ def plot_class_mape(cm, ax):
                 va='center', fontsize=8.5, color=NAVY)
     ax.grid(axis='x', color=LGRAY, linewidth=0.7, zorder=0)
     ax.grid(axis='y', visible=False)
-    style_axis(ax, title='Forecast Error by Event Type', xlabel='MAPE (%)', pct_x=True)
+    style_axis(ax, title='Forecast Error by Event Type  (last 3 seasons)',
+               xlabel='MAPE (%)', pct_x=True)
 
 
 # ── Save individual PNGs ───────────────────────────────────────────────────
@@ -305,13 +317,22 @@ def main():
     df      = load()
     row2526 = load_2526_partial()
     sm      = season_metrics(df, row_2526=row2526)
-    cm      = class_metrics(df)
+
+    # Class chart: last 3 seasons only (exclude pandemic-affected 22-23),
+    # include the 25-26 partial-actuals events so it reflects current model.
+    df_2526 = _load_2526_events()
+    cm_df   = pd.concat([
+        df[df['Season'].isin(['23-24', '24-25'])][
+            ['EventClass', 'AbsPct', 'SignedPct']],
+        df_2526[['EventClass', 'AbsPct', 'SignedPct']],
+    ], ignore_index=True)
+    cm      = class_metrics(cm_df)
 
     print(f"Loaded {len(df)} events (3 seasons)")
     print(f"25-26 partial: n={row2526['n']}  MAPE={row2526['MAPE']:.1f}%  Bias={row2526['Bias']:+.1f}%")
     print("\nSeason metrics:")
     print(sm.to_string(index=False))
-    print("\nClass metrics (ex-Prestige):")
+    print(f"\nClass metrics (last 3 seasons, n={len(cm_df)}):")
     print(cm.to_string(index=False))
 
     print("\nGenerating charts...")
