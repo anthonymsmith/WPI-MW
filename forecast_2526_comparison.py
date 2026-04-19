@@ -120,7 +120,13 @@ def build_hierarchy_models(filtered):
         ea.groupby(['EventSubGenre'], group_keys=False)
         .apply(lambda g: pd.Series({'WA_f4': wg_avg(g)})).reset_index()
     )
-    return primary, f1, f2, f3, f4
+    # F5 — ultimate fallback: EventClass mean. Guarantees no NaN for
+    # one-off subgenre × new-venue combinations (e.g. Fusion @ JMAC).
+    f5 = (
+        ea.groupby(['EventClass'], group_keys=False)
+        .apply(lambda g: pd.Series({'WA_f5': wg_avg(g)})).reset_index()
+    )
+    return primary, f1, f2, f3, f4, f5
 
 
 def build_name_model(filtered):
@@ -143,7 +149,7 @@ def build_name_model(filtered):
     return name_model
 
 
-def predict_model_a(events_df, primary, f1, f2, f3, f4):
+def predict_model_a(events_df, primary, f1, f2, f3, f4, f5=None):
     fc = events_df.copy()
     for col in ['EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre']:
         fc[col] = fc[col].astype(str).str.strip()
@@ -153,26 +159,33 @@ def predict_model_a(events_df, primary, f1, f2, f3, f4):
     fc = fc.merge(f2, on=['EventClass', 'EventVenue', 'EventGenre'], how='left')
     fc = fc.merge(f3, on=['EventClass', 'EventVenue'], how='left')
     fc = fc.merge(f4, on='EventSubGenre', how='left')
+    if f5 is not None:
+        fc = fc.merge(f5, on='EventClass', how='left')
 
-    fc['Pred_A'] = (
+    preds = (
         fc['WA_p']
         .combine_first(fc['WA_f1'])
         .combine_first(fc['WA_f2'])
         .combine_first(fc['WA_f3'])
         .combine_first(fc['WA_f4'])
     )
-    # Label fallback level
+    if f5 is not None:
+        preds = preds.combine_first(fc['WA_f5'])
+    fc['Pred_A'] = preds
+
     conditions = [
         fc['WA_p'].notna(),
         fc['WA_p'].isna() & fc['WA_f1'].notna(),
         fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].notna(),
         fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].notna(),
+        fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f4'].notna(),
     ]
     choices = ['Primary (Class+Venue+LoB+SubGenre)',
                'F1 (Class+Venue+SubGenre)',
                'F2 (Class+Venue+Genre)',
-               'F3 (Class+Venue)']
-    fc['FallbackLevel'] = np.select(conditions, choices, default='F4 (SubGenre)')
+               'F3 (Class+Venue)',
+               'F4 (SubGenre)']
+    fc['FallbackLevel'] = np.select(conditions, choices, default='F5 (EventClass)')
     return fc
 
 
@@ -215,7 +228,7 @@ def main():
     filtered_train = get_training_df(merged, all_prior)
 
     # Build models
-    primary, f1, f2, f3, f4 = build_hierarchy_models(filtered_train)
+    primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
     # Get 25-26 completed events with actuals
@@ -239,7 +252,7 @@ def main():
     actuals_2526 = actuals_2526.merge(cap, on='EventId', how='left')
 
     # Generate predictions
-    fc = predict_model_a(actuals_2526, primary, f1, f2, f3, f4)
+    fc = predict_model_a(actuals_2526, primary, f1, f2, f3, f4, f5)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
@@ -254,7 +267,7 @@ def main():
         .reset_index()
     )
     hist_actuals = hist_actuals.merge(cap, on='EventId', how='left')
-    hist_fc = predict_model_a(hist_actuals, primary, f1, f2, f3, f4)
+    hist_fc = predict_model_a(hist_actuals, primary, f1, f2, f3, f4, f5)
 
     fc = apply_artist_adjustment(
         fc,

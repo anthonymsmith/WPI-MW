@@ -90,6 +90,10 @@ GENRE_FIT = {
     "Bach Choir":   0.9,
     "Cantata":      0.9,
     "Ballet":       0.8,
+    # Crossover — folk/world/Americana artists who draw a classical-curious
+    # audience (MacMaster & Leahy, Silkroad, Sam Bush caliber). Tag in the
+    # manifest to promote from the 0.3 world/folk default into this class.
+    "Crossover":    0.8,
     "Jazz":         0.5,
     "Contemporary": 0.5,
     "Americana":    0.3,
