@@ -1,7 +1,7 @@
 """
 Artist popularity signal lookup with local JSON cache.
 
-Fetches from Last.fm, Spotify (optional), and Wikipedia APIs.
+Fetches from Last.fm, Spotify (optional), Wikipedia, and Deezer.
 Caches results so APIs are only called once per artist.
 All lookups gracefully return None on failure so the adjustment
 layer can fall back to the bucket prior.
@@ -9,6 +9,8 @@ layer can fall back to the bucket prior.
 Last.fm: set LASTFM_API_KEY (or hardcoded below).
 Spotify: optional — set SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET.
 Wikipedia: no auth required.
+Deezer: no auth required. Strong for classical recitalists (album count
+catches artists with pro recording careers but thin LFM scrobbling).
 """
 
 import calendar
@@ -153,6 +155,34 @@ def _wikipedia_pageviews(artist_name):
         return None  # transient failure — caller should not cache this
 
 
+# ── Deezer ───────────────────────────────────────────────────────────────────
+
+def _deezer_lookup(artist_name):
+    """Return {deezer_fans: int, deezer_albums: int} or None.
+
+    Uses Deezer's public search endpoint (no auth). Matches the top hit.
+    nb_album is particularly informative for classical recitalists — it
+    reflects recorded discography depth, which LFM scrobble counts miss.
+    """
+    try:
+        resp = requests.get(
+            "https://api.deezer.com/search/artist",
+            params={"q": artist_name, "limit": 1},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("data", [])
+        if not items:
+            return {"deezer_fans": 0, "deezer_albums": 0}  # confirmed no match
+        a = items[0]
+        return {
+            "deezer_fans":   int(a.get("nb_fan", 0) or 0),
+            "deezer_albums": int(a.get("nb_album", 0) or 0),
+        }
+    except Exception:
+        return None
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def get_signals(artist_name, force_refresh=False):
@@ -179,6 +209,13 @@ def get_signals(artist_name, force_refresh=False):
                 entry["wikipedia_monthly_views"] = wiki
                 cache[key] = entry
                 _save_cache(cache)
+        # Backfill Deezer if added after this entry was first cached
+        if "deezer_fans" not in entry:
+            dz = _deezer_lookup(artist_name)
+            if dz is not None:
+                entry.update(dz)
+                cache[key] = entry
+                _save_cache(cache)
         return cache[key]
 
     signals = {
@@ -188,6 +225,8 @@ def get_signals(artist_name, force_refresh=False):
         "lastfm_listeners": None,
         "lastfm_playcount": None,
         "wikipedia_monthly_views": None,
+        "deezer_fans": None,
+        "deezer_albums": None,
         "fetched_at": datetime.utcnow().isoformat(),
     }
 
@@ -207,6 +246,11 @@ def get_signals(artist_name, force_refresh=False):
     wiki = _wikipedia_pageviews(artist_name)
     if wiki is not None:
         signals["wikipedia_monthly_views"] = wiki
+
+    # Deezer
+    dz = _deezer_lookup(artist_name)
+    if dz is not None:
+        signals.update(dz)
 
     cache[key] = signals
     _save_cache(cache)
@@ -234,18 +278,19 @@ def cache_summary() -> None:
     if not cache:
         print("Cache is empty.")
         return
-    print(f"{'Artist':<50} {'Spotify':>8} {'Followers':>10} {'LFM List':>10} {'Wiki/mo':>10}  {'Fetched'}")
-    print("-" * 107)
+    print(f"{'Artist':<45} {'LFM List':>10} {'Wiki/mo':>10} {'DzFans':>8} {'DzAlb':>6}  {'Fetched'}")
+    print("-" * 100)
     for entry in sorted(cache.values(), key=lambda x: x.get("artist_name", "")):
-        sp  = entry.get("spotify_popularity", "–")
-        fol = entry.get("spotify_followers")
         lfm = entry.get("lastfm_listeners")
         wv  = entry.get("wikipedia_monthly_views")
+        df  = entry.get("deezer_fans")
+        da  = entry.get("deezer_albums")
         ts  = entry.get("fetched_at", "")[:10]
-        fol_s = f"{fol:,}" if fol else "–"
         lfm_s = f"{lfm:,}" if lfm else "–"
-        wv_s  = f"{wv:,}" if wv else "–"
-        print(f"{entry.get('artist_name',''):<50} {str(sp):>8} {fol_s:>10} {lfm_s:>10} {wv_s:>10}  {ts}")
+        wv_s  = f"{wv:,}"  if wv  else "–"
+        df_s  = f"{df:,}"  if df is not None else "–"
+        da_s  = f"{da}"    if da is not None else "–"
+        print(f"{entry.get('artist_name',''):<45} {lfm_s:>10} {wv_s:>10} {df_s:>8} {da_s:>6}  {ts}")
 
 
 if __name__ == "__main__":

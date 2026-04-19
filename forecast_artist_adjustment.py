@@ -24,6 +24,7 @@ ARTIST_ADJUSTMENT_ENABLED = True    # flip to False to disable entirely
 SIGNAL_COLS = [
     "log_lastfm_listeners",        # genre-fit adjusted
     "log_wikipedia_monthly_views",
+    "log_deezer_albums",           # discography depth — classical-friendly
 ]
 
 # ── Informative priors ─────────────────────────────────────────────────────────
@@ -46,28 +47,37 @@ INFORMED_PRIORS = {
     "intercept":                   (0.00, 0.10),
     "log_lastfm_listeners":        (0.09, 0.015),
     "log_wikipedia_monthly_views": (0.05, 0.010),
+    # Deezer album count: Yo-Yo Ma 183 (log≈5.2) vs. Fung 4 (log≈1.6). A ~4-unit
+    # log spread mapping to ~1.25× draw range → β≈0.05. Prior-dominated (std 0.010).
+    "log_deezer_albums":           (0.05, 0.010),
 }
 NOISE_STD = 0.27   # log-scale residual noise
 
 # Cold-start centers used when no training history is available.
 # Rough medians from the cache: typical classical artist ~log(8000)≈9.0 LFM,
-# ~log(400)≈6.0 monthly Wikipedia views.
+# ~log(400)≈6.0 monthly Wikipedia views, ~log(20)≈3.0 Deezer albums.
 DEFAULT_CENTERS = {
     "log_lastfm_listeners":        9.0,
     "log_wikipedia_monthly_views": 6.0,
+    "log_deezer_albums":           3.0,
 }
 
 # ── Signal-strength gate ──────────────────────────────────────────────────────
-# The LFM/Wiki signals measure global pop-audience reach, not MW classical
-# subscriber loyalty. Firing the adjustment on weak-signal or wrong-genre
-# artists produced large misses on historical seasons (e.g. Silkroad,
-# Orchestre Métropolitain, Tchaikovsky Trio). Require:
+# The web signals measure global reach, not MW classical subscriber loyalty.
+# Firing the adjustment on weak-signal or wrong-genre artists produced large
+# misses on historical seasons (e.g. Silkroad, Orchestre Métropolitain,
+# Tchaikovsky Trio). Require:
 #   1. Genre-fit ≥ 0.7 — classical/chamber/recital/choral/ballet
-#   2. Substantive signal — Wiki ≥ 200/mo OR Last.fm (pre-discount) ≥ 2000
-# Events that fail the gate fall back to the bucket prior.
+#   2. Substantive signal — Wiki ≥ 200/mo OR LFM (pre-discount) ≥ 2000
+#      OR Deezer discography ≥ 3 albums (catches classical recitalists
+#      like Zlatomir Fung, Hermitage Piano Trio — real pros w/ thin LFM).
+# Each signal is gated individually; features that fail are NaN'd and
+# imputed to the training center (neutral contribution). Events where
+# no signal passes fall back to the bucket prior.
 MIN_GENRE_FIT          = 0.7
 MIN_WIKI_MONTHLY_VIEWS = 200
 MIN_LFM_LISTENERS_RAW  = 2000
+MIN_DEEZER_ALBUMS      = 3
 
 # ── Genre-fit weights ──────────────────────────────────────────────────────────
 # Discounts LFM signal where global audience ≠ MW classical subscriber base.
@@ -206,32 +216,30 @@ def _build_signal_features(names, subgenres=None):
                     break
         entry = entry or {}
 
-        sp   = entry.get("spotify_popularity")
-        fol  = entry.get("spotify_followers")
-        wiki = entry.get("wikipedia_monthly_views")
-        lfm  = entry.get("lastfm_listeners")
+        wiki   = entry.get("wikipedia_monthly_views")
+        lfm    = entry.get("lastfm_listeners")
+        dz_alb = entry.get("deezer_albums")
 
         subgenre   = str(subgenres.loc[idx]) if subgenres is not None and idx in subgenres.index else ""
         fit        = GENRE_FIT.get(subgenre, GENRE_FIT_DEFAULT)
+        fit_ok     = fit >= MIN_GENRE_FIT
         lfm_fitted = lfm * fit if lfm is not None else None
 
-        # Gate: require classical-leaning genre AND substantive signal.
-        # Zero out signals if the gate fails — downstream falls back to bucket.
-        wiki_ok = wiki is not None and wiki >= MIN_WIKI_MONTHLY_VIEWS
-        lfm_ok  = lfm  is not None and lfm  >= MIN_LFM_LISTENERS_RAW
-        gated_out = (fit < MIN_GENRE_FIT) or not (wiki_ok or lfm_ok)
+        # Per-feature gate — all require classical-leaning genre.
+        wiki_ok = fit_ok and wiki   is not None and wiki   >= MIN_WIKI_MONTHLY_VIEWS
+        lfm_ok  = fit_ok and lfm    is not None and lfm    >= MIN_LFM_LISTENERS_RAW
+        dz_ok   = fit_ok and dz_alb is not None and dz_alb >= MIN_DEEZER_ALBUMS
 
-        if gated_out:
+        if not (wiki_ok or lfm_ok or dz_ok):
             rows.append({c: np.nan for c in
                          ["log_lastfm_listeners", "log_wikipedia_monthly_views",
-                          "log_spotify_followers", "spotify_popularity"]})
+                          "log_deezer_albums"]})
             continue
 
         rows.append({
-            "log_lastfm_listeners":        np.log1p(lfm_fitted) if lfm_fitted is not None else np.nan,
-            "log_wikipedia_monthly_views": np.log1p(wiki)       if wiki       is not None else np.nan,
-            "log_spotify_followers":       np.log1p(fol)        if fol        is not None else np.nan,
-            "spotify_popularity":          float(sp)            if sp         is not None else np.nan,
+            "log_lastfm_listeners":        np.log1p(lfm_fitted) if lfm_ok else np.nan,
+            "log_wikipedia_monthly_views": np.log1p(wiki)       if wiki_ok else np.nan,
+            "log_deezer_albums":           np.log1p(dz_alb)     if dz_ok   else np.nan,
         })
     return pd.DataFrame(rows, index=names.index)
 
