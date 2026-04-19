@@ -57,6 +57,18 @@ DEFAULT_CENTERS = {
     "log_wikipedia_monthly_views": 6.0,
 }
 
+# ── Signal-strength gate ──────────────────────────────────────────────────────
+# The LFM/Wiki signals measure global pop-audience reach, not MW classical
+# subscriber loyalty. Firing the adjustment on weak-signal or wrong-genre
+# artists produced large misses on historical seasons (e.g. Silkroad,
+# Orchestre Métropolitain, Tchaikovsky Trio). Require:
+#   1. Genre-fit ≥ 0.7 — classical/chamber/recital/choral/ballet
+#   2. Substantive signal — Wiki ≥ 200/mo OR Last.fm (pre-discount) ≥ 2000
+# Events that fail the gate fall back to the bucket prior.
+MIN_GENRE_FIT          = 0.7
+MIN_WIKI_MONTHLY_VIEWS = 200
+MIN_LFM_LISTENERS_RAW  = 2000
+
 # ── Genre-fit weights ──────────────────────────────────────────────────────────
 # Discounts LFM signal where global audience ≠ MW classical subscriber base.
 GENRE_FIT = {
@@ -202,6 +214,18 @@ def _build_signal_features(names, subgenres=None):
         subgenre   = str(subgenres.loc[idx]) if subgenres is not None and idx in subgenres.index else ""
         fit        = GENRE_FIT.get(subgenre, GENRE_FIT_DEFAULT)
         lfm_fitted = lfm * fit if lfm is not None else None
+
+        # Gate: require classical-leaning genre AND substantive signal.
+        # Zero out signals if the gate fails — downstream falls back to bucket.
+        wiki_ok = wiki is not None and wiki >= MIN_WIKI_MONTHLY_VIEWS
+        lfm_ok  = lfm  is not None and lfm  >= MIN_LFM_LISTENERS_RAW
+        gated_out = (fit < MIN_GENRE_FIT) or not (wiki_ok or lfm_ok)
+
+        if gated_out:
+            rows.append({c: np.nan for c in
+                         ["log_lastfm_listeners", "log_wikipedia_monthly_views",
+                          "log_spotify_followers", "spotify_popularity"]})
+            continue
 
         rows.append({
             "log_lastfm_listeners":        np.log1p(lfm_fitted) if lfm_fitted is not None else np.nan,

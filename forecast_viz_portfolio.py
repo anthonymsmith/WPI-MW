@@ -55,7 +55,7 @@ plt.rcParams.update({
 
 # ── Data loading ───────────────────────────────────────────────────────────
 def load():
-    df = pd.read_excel('Forecast_Honest_Eval.xlsx', sheet_name='All_Seasons')
+    df = pd.read_excel('Forecast_Honest_Eval_Patched.xlsx', sheet_name='All_Seasons')
     df = df[df['ActualAttendance'] > 0].copy()
     df['AbsPct']    = df['PercentError'] * 100
     df['SignedPct'] = df['SignedPctError'] * 100
@@ -77,8 +77,8 @@ def load_2526_partial():
     cutoff = pd.Timestamp('2025-12-11')
     rel = comp[comp['EventDate'] <= cutoff].copy()
 
-    rel['AbsPct']    = (rel['Pred_A'] - rel['Actual']).abs() / rel['Actual'] * 100
-    rel['SignedPct'] = (rel['Pred_A'] - rel['Actual'])       / rel['Actual'] * 100
+    rel['AbsPct']    = (rel['Pred_Adj'] - rel['Actual']).abs() / rel['Actual'] * 100
+    rel['SignedPct'] = (rel['Pred_Adj'] - rel['Actual'])       / rel['Actual'] * 100
 
     return {
         'season':  "'25–26*",
