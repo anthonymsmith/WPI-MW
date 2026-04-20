@@ -40,6 +40,11 @@ REPEAT_ROLLING_WINDOW = 3
 PANDEMIC_START = pd.Timestamp('2020-03-10')
 PANDEMIC_END   = pd.Timestamp('2022-06-30')
 
+# Minimum observations for a (Class, Venue, LoB, SubGenre, SeatFormat) bucket
+# to anchor its own prediction. Below this, fall through to the
+# non-SeatFormat bucket, adjusted by the venue-wide Floor-vs-Full ratio.
+MIN_SEATFORMAT_OBS = 3
+
 
 def assign_season_weight(season):
     if pd.isnull(season): return 1.0
@@ -61,11 +66,17 @@ def load_data():
     df['Quantity'] = pd.to_numeric(df.get('Quantity'), errors='coerce').fillna(0)
     df['TicketTotal'] = pd.to_numeric(df.get('TicketTotal'), errors='coerce').fillna(0)
 
-    # Merge from manifest: EventLoB + EventRepeat (EventSubGenre stays from CSV to avoid collision)
-    manifest_meta = em.drop_duplicates(subset='EventId')[
-        ['EventId', 'EventName', 'EventStatus', 'EventType', 'EventClass',
-         'EventVenue', 'EventGenre', 'EventLoB', 'EventRepeat', 'EventCapacity']
-    ].copy()
+    # Merge from manifest: EventLoB + EventRepeat + Pricing + SeatFormat
+    # (EventSubGenre stays from CSV to avoid collision)
+    meta_cols = ['EventId', 'EventName', 'EventStatus', 'EventType', 'EventClass',
+                 'EventVenue', 'EventGenre', 'EventLoB', 'EventRepeat', 'EventCapacity']
+    if 'Pricing' in em.columns:
+        meta_cols.append('Pricing')
+    if 'Seat Format' in em.columns:
+        em = em.rename(columns={'Seat Format': 'SeatFormat'})
+    if 'SeatFormat' in em.columns:
+        meta_cols.append('SeatFormat')
+    manifest_meta = em.drop_duplicates(subset='EventId')[meta_cols].copy()
     for c in ['EventStatus', 'EventType']:
         manifest_meta[c] = manifest_meta[c].astype(str).str.strip().str.title()
 
@@ -86,17 +97,28 @@ def load_data():
     if 'EventRepeat' in merged.columns:
         merged['EventRepeat'] = merged['EventRepeat'].astype(str).str.strip()
         merged.loc[merged['EventRepeat'].isin(['nan', 'None', '']), 'EventRepeat'] = pd.NA
+    if 'Pricing' in merged.columns:
+        merged['Pricing'] = merged['Pricing'].astype(str).str.strip()
+        merged.loc[merged['Pricing'].isin(['nan', 'None', '']), 'Pricing'] = pd.NA
+    if 'SeatFormat' in merged.columns:
+        merged['SeatFormat'] = merged['SeatFormat'].astype(str).str.strip()
+        merged.loc[merged['SeatFormat'].isin(['nan', 'None', '']), 'SeatFormat'] = pd.NA
 
     return em, merged
 
 
 def get_training_df(merged, training_seasons):
+    # Exclude PWYW / free-admission events from priors — their draw reflects
+    # pricing, not artist pull, and contaminates paid-event buckets.
     mask = merged['Quantity'] > 0 if INCLUDE_COMPS else merged['TicketTotal'] > 0
+    pricing = merged.get('Pricing', pd.Series(pd.NA, index=merged.index))
+    is_paid = ~pricing.astype(str).str.upper().isin(['PWYW', 'FREE'])
     filtered = merged[
         (merged['Season'].isin(training_seasons)) &
         (merged['EventType'] == 'Live') &
         (merged['EventStatus'] == 'Complete') &
         (merged['TicketStatus'] == 'Active') &
+        is_paid &
         mask
     ].copy()
     filtered['Weight'] = filtered['Season'].apply(assign_season_weight)
@@ -104,13 +126,16 @@ def get_training_df(merged, training_seasons):
 
 
 def build_hierarchy_models(filtered):
-    """Hierarchy: EventRepeat (if tagged) → (Class,Venue,LoB,SubGenre)
-       → (Class,Venue,SubGenre) → (Class,Venue,Genre) → (Class,Venue)
-       → (SubGenre) → (EventClass)"""
+    """Hierarchy: EventRepeat (if tagged) → Primary_SF (if tagged, n≥MIN_SEATFORMAT_OBS)
+       → (Class,Venue,LoB,SubGenre) × SeatFormatRatio (when thinly tagged)
+       → (Class,Venue,LoB,SubGenre) → (Class,Venue,SubGenre)
+       → (Class,Venue,Genre) → (Class,Venue) → (SubGenre) → (EventClass)"""
     gb_cols = ['EventId', 'EventName', 'EventClass', 'EventVenue',
                'EventGenre', 'EventLoB', 'EventSubGenre', 'Season']
     if 'EventRepeat' in filtered.columns:
         gb_cols = gb_cols + ['EventRepeat']
+    if 'SeatFormat' in filtered.columns:
+        gb_cols = gb_cols + ['SeatFormat']
     ea = (
         filtered
         .groupby(gb_cols, group_keys=False, dropna=False)
@@ -146,6 +171,36 @@ def build_hierarchy_models(filtered):
     else:
         repeat_model = pd.DataFrame(columns=['EventRepeat', 'WA_rep', 'RepeatCount'])
 
+    # SeatFormat-aware primary bucket — same dims as Primary plus SeatFormat.
+    # Fires when the event carries a SeatFormat tag AND the bucket has
+    # enough observations to anchor its own mean. Sparse cases fall through
+    # and get the venue-wide ratio treatment below.
+    if 'SeatFormat' in ea.columns:
+        ea_sf = ea[ea['SeatFormat'].notna() & (ea['SeatFormat'] != '')]
+        primary_sf = (
+            ea_sf.groupby(['EventClass', 'EventVenue', 'EventLoB',
+                           'EventSubGenre', 'SeatFormat'], group_keys=False)
+            .apply(lambda g: pd.Series({'WA_psf': wg_avg(g), 'N_psf': len(g)}))
+            .reset_index()
+        )
+        # Per-venue Full/Floor/Intimate ratios vs Full (within-venue, n≥3).
+        venue_sf_mean = (
+            ea_sf.groupby(['EventVenue', 'SeatFormat'], group_keys=False)
+            .apply(lambda g: pd.Series({'sf_mean': wg_avg(g), 'sf_n': len(g)}))
+            .reset_index()
+        )
+        full_mean = venue_sf_mean[venue_sf_mean['SeatFormat'] == 'Full'] \
+            .rename(columns={'sf_mean': 'full_mean'})[['EventVenue', 'full_mean']]
+        sf_ratio = venue_sf_mean.merge(full_mean, on='EventVenue', how='left')
+        sf_ratio['Ratio'] = sf_ratio['sf_mean'] / sf_ratio['full_mean']
+        sf_ratio.loc[sf_ratio['sf_n'] < MIN_SEATFORMAT_OBS, 'Ratio'] = np.nan
+        sf_ratio = sf_ratio[['EventVenue', 'SeatFormat', 'Ratio']]
+    else:
+        primary_sf = pd.DataFrame(columns=['EventClass', 'EventVenue',
+                                            'EventLoB', 'EventSubGenre',
+                                            'SeatFormat', 'WA_psf', 'N_psf'])
+        sf_ratio = pd.DataFrame(columns=['EventVenue', 'SeatFormat', 'Ratio'])
+
     primary = (
         ea.groupby(['EventClass', 'EventVenue', 'EventLoB', 'EventSubGenre'], group_keys=False)
         .apply(lambda g: pd.Series({'WA_p': wg_avg(g)})).reset_index()
@@ -172,7 +227,7 @@ def build_hierarchy_models(filtered):
         ea.groupby(['EventClass'], group_keys=False)
         .apply(lambda g: pd.Series({'WA_f5': wg_avg(g)})).reset_index()
     )
-    return repeat_model, primary, f1, f2, f3, f4, f5
+    return repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5
 
 
 def build_name_model(filtered):
@@ -195,7 +250,8 @@ def build_name_model(filtered):
     return name_model
 
 
-def predict_model_a(events_df, repeat_model, primary, f1, f2, f3, f4, f5=None):
+def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
+                    primary, f1, f2, f3, f4, f5=None):
     fc = events_df.copy()
     for col in ['EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre']:
         fc[col] = fc[col].astype(str).str.strip()
@@ -210,6 +266,20 @@ def predict_model_a(events_df, repeat_model, primary, f1, f2, f3, f4, f5=None):
     else:
         fc['WA_rep'] = np.nan
 
+    # SeatFormat layer: direct bucket match (n≥MIN_SEATFORMAT_OBS) OR
+    # venue-wide ratio applied to the non-SF primary prediction.
+    has_sf_col = 'SeatFormat' in fc.columns and sf_ratio is not None \
+                 and not sf_ratio.empty
+    if has_sf_col:
+        fc = fc.merge(primary_sf,
+                      on=['EventClass', 'EventVenue', 'EventLoB',
+                          'EventSubGenre', 'SeatFormat'], how='left')
+        fc.loc[fc['N_psf'].fillna(0) < MIN_SEATFORMAT_OBS, 'WA_psf'] = np.nan
+        fc = fc.merge(sf_ratio, on=['EventVenue', 'SeatFormat'], how='left')
+    else:
+        fc['WA_psf'] = np.nan
+        fc['Ratio'] = np.nan
+
     fc = fc.merge(primary, on=['EventClass', 'EventVenue', 'EventLoB', 'EventSubGenre'], how='left')
     fc = fc.merge(f1, on=['EventClass', 'EventVenue', 'EventSubGenre'], how='left')
     fc = fc.merge(f2, on=['EventClass', 'EventVenue', 'EventGenre'], how='left')
@@ -218,7 +288,8 @@ def predict_model_a(events_df, repeat_model, primary, f1, f2, f3, f4, f5=None):
     if f5 is not None:
         fc = fc.merge(f5, on='EventClass', how='left')
 
-    preds = (
+    # Base (non-SF) prediction using the existing hierarchy.
+    base = (
         fc['WA_rep']
         .combine_first(fc['WA_p'])
         .combine_first(fc['WA_f1'])
@@ -227,19 +298,37 @@ def predict_model_a(events_df, repeat_model, primary, f1, f2, f3, f4, f5=None):
         .combine_first(fc['WA_f4'])
     )
     if f5 is not None:
-        preds = preds.combine_first(fc['WA_f5'])
-    fc['Pred_A'] = preds
+        base = base.combine_first(fc['WA_f5'])
+
+    # SeatFormat ratio adjustment — only when falling to F2 or coarser.
+    # F1 (Class+Venue+SubGenre) is still SubGenre-specific and may already
+    # be Floor-dominated (e.g. Piano at MH is mostly Hamelin-type recitals).
+    # F2+ averages across SubGenres, so a venue-wide SF ratio is appropriate.
+    apply_ratio = (
+        fc['WA_psf'].isna() & fc['WA_p'].isna() & fc['WA_f1'].isna()
+        & fc['Ratio'].notna()
+    )
+    base_adj = np.where(apply_ratio, base * fc['Ratio'], base)
+    fc['Pred_A'] = np.where(fc['WA_psf'].notna(), fc['WA_psf'], base_adj)
 
     conditions = [
+        fc['WA_psf'].notna(),
         fc['WA_rep'].notna(),
-        fc['WA_rep'].isna() & fc['WA_p'].notna(),
-        fc['WA_rep'].isna() & fc['WA_p'].isna() & fc['WA_f1'].notna(),
-        fc['WA_rep'].isna() & fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].notna(),
-        fc['WA_rep'].isna() & fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].notna(),
-        fc['WA_rep'].isna() & fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f4'].notna(),
+        fc['WA_p'].notna(),
+        apply_ratio & fc['WA_f1'].notna(),
+        apply_ratio & fc['WA_f1'].isna() & fc['WA_f2'].notna(),
+        apply_ratio & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].notna(),
+        fc['WA_f1'].notna(),
+        fc['WA_f1'].isna() & fc['WA_f2'].notna(),
+        fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].notna(),
+        fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f4'].notna(),
     ]
-    choices = ['Repeat (EventRepeat)',
+    choices = ['Primary_SF (Class+Venue+LoB+SubGenre+SF)',
+               'Repeat (EventRepeat)',
                'Primary (Class+Venue+LoB+SubGenre)',
+               'F1 × SF ratio',
+               'F2 × SF ratio',
+               'F3 × SF ratio',
                'F1 (Class+Venue+SubGenre)',
                'F2 (Class+Venue+Genre)',
                'F3 (Class+Venue)',
@@ -287,7 +376,7 @@ def main():
     filtered_train = get_training_df(merged, all_prior)
 
     # Build models
-    repeat_model, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
+    repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
     # Get 25-26 completed events with actuals
@@ -300,7 +389,8 @@ def main():
             (merged['Quantity'] > 0)
         ]
         .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
-                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat'], group_keys=False, dropna=False)
+                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat',
+                  'SeatFormat'], group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
@@ -311,7 +401,7 @@ def main():
     actuals_2526 = actuals_2526.merge(cap, on='EventId', how='left')
 
     # Generate predictions
-    fc = predict_model_a(actuals_2526, repeat_model, primary, f1, f2, f3, f4, f5)
+    fc = predict_model_a(actuals_2526, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
@@ -321,12 +411,13 @@ def main():
     hist_actuals = (
         filtered_train
         .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
-                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat'], group_keys=False, dropna=False)
+                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat',
+                  'SeatFormat'], group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
     hist_actuals = hist_actuals.merge(cap, on='EventId', how='left')
-    hist_fc = predict_model_a(hist_actuals, repeat_model, primary, f1, f2, f3, f4, f5)
+    hist_fc = predict_model_a(hist_actuals, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
 
     fc = apply_artist_adjustment(
         fc,

@@ -24,7 +24,7 @@ def main():
     all_prior = sorted([s for s in merged["Season"].dropna().unique() if s < FORECAST_SEASON])
     filtered_train = get_training_df(merged, all_prior)
 
-    repeat_model, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
+    repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
     qty_mask = merged["Quantity"] > 0 if INCLUDE_COMPS else merged["TicketTotal"] > 0
@@ -51,7 +51,7 @@ def main():
     cap["EventCapacity"] = pd.to_numeric(cap["EventCapacity"], errors="coerce")
     actuals = actuals.merge(cap, on="EventId", how="left")
 
-    fc = predict_model_a(actuals, repeat_model, primary, f1, f2, f3, f4, f5)
+    fc = predict_model_a(actuals, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
     fc = predict_model_b(fc, name_model)
     fc["Pred_A"] = cap_at_capacity(fc["Pred_A"], fc["EventCapacity"])
     fc["Pred_B"] = cap_at_capacity(fc["Pred_B"], fc["EventCapacity"])
@@ -68,7 +68,7 @@ def main():
         .reset_index()
         .merge(cap, on="EventId", how="left")
     )
-    hist_fc = predict_model_a(hist_actuals, repeat_model, primary, f1, f2, f3, f4, f5)
+    hist_fc = predict_model_a(hist_actuals, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
 
     fc = apply_artist_adjustment(
         fc,

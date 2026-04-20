@@ -32,7 +32,7 @@ def eval_one_season(merged, em, target_season):
         if s < target_season
     ])
     train = get_training_df(merged, prior_seasons)
-    repeat_model, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(train)
+    repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(train)
 
     # Target-season actuals
     actuals = (
@@ -57,7 +57,7 @@ def eval_one_season(merged, em, target_season):
     cap["EventCapacity"] = pd.to_numeric(cap["EventCapacity"], errors="coerce")
     actuals = actuals.merge(cap, on="EventId", how="left")
 
-    fc = predict_model_a(actuals, repeat_model, primary, f1, f2, f3, f4, f5)
+    fc = predict_model_a(actuals, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
     fc["Pred_A"] = cap_at_capacity(fc["Pred_A"], fc["EventCapacity"])
 
     # Artist-adjustment training history (same holdout — exclude target season)
@@ -73,7 +73,7 @@ def eval_one_season(merged, em, target_season):
         .reset_index()
         .merge(cap, on="EventId", how="left")
     )
-    hist_fc = predict_model_a(hist_actuals, repeat_model, primary, f1, f2, f3, f4, f5)
+    hist_fc = predict_model_a(hist_actuals, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
 
     fc = apply_artist_adjustment(
         fc,
