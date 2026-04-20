@@ -24,12 +24,15 @@ EVAL_SEASONS = ["22-23", "23-24", "24-25"]
 
 
 def eval_one_season(merged, em, target_season):
-    other_seasons = sorted([
+    # Temporal holdout: train only on seasons BEFORE the target. This avoids
+    # future-season leakage — e.g., a partial-sales 25-26 event polluting the
+    # 24-25 hindcast's priors.
+    prior_seasons = sorted([
         s for s in merged["Season"].dropna().unique()
-        if s != target_season
+        if s < target_season
     ])
-    train = get_training_df(merged, other_seasons)
-    primary, f1, f2, f3, f4, f5 = build_hierarchy_models(train)
+    train = get_training_df(merged, prior_seasons)
+    repeat_model, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(train)
 
     # Target-season actuals
     actuals = (
@@ -42,8 +45,9 @@ def eval_one_season(merged, em, target_season):
         ]
         .groupby(
             ["EventId", "EventName", "EventClass", "EventVenue",
-             "EventGenre", "EventLoB", "EventSubGenre"],
+             "EventGenre", "EventLoB", "EventSubGenre", "EventRepeat"],
             group_keys=False,
+            dropna=False,
         )
         .agg(Actual=("Quantity", "sum"))
         .reset_index()
@@ -53,7 +57,7 @@ def eval_one_season(merged, em, target_season):
     cap["EventCapacity"] = pd.to_numeric(cap["EventCapacity"], errors="coerce")
     actuals = actuals.merge(cap, on="EventId", how="left")
 
-    fc = predict_model_a(actuals, primary, f1, f2, f3, f4, f5)
+    fc = predict_model_a(actuals, repeat_model, primary, f1, f2, f3, f4, f5)
     fc["Pred_A"] = cap_at_capacity(fc["Pred_A"], fc["EventCapacity"])
 
     # Artist-adjustment training history (same holdout — exclude target season)
@@ -61,14 +65,15 @@ def eval_one_season(merged, em, target_season):
         train
         .groupby(
             ["EventId", "EventName", "EventClass", "EventVenue",
-             "EventGenre", "EventLoB", "EventSubGenre"],
+             "EventGenre", "EventLoB", "EventSubGenre", "EventRepeat"],
             group_keys=False,
+            dropna=False,
         )
         .agg(Actual=("Quantity", "sum"))
         .reset_index()
         .merge(cap, on="EventId", how="left")
     )
-    hist_fc = predict_model_a(hist_actuals, primary, f1, f2, f3, f4, f5)
+    hist_fc = predict_model_a(hist_actuals, repeat_model, primary, f1, f2, f3, f4, f5)
 
     fc = apply_artist_adjustment(
         fc,

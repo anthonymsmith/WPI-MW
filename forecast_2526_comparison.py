@@ -22,6 +22,24 @@ FORECAST_SEASON = '25-26'
 WEIGHTS = {'19-20': 1.0, '20-21': 0.3, '21-22': 0.7,
            '22-23': 2.0, '23-24': 3.0, '24-25': 3.0}
 
+# Minimum observations for EventRepeat tag to fire the repeat level.
+# Major artists rarely visit MW 3+ times, so a single prior visit should
+# inform the forecast. Temporal holdout (below) prevents partial-sales
+# future events from contaminating backward hindcasts.
+MIN_REPEAT_OBS = 1
+
+# Rolling window for the repeat layer. Recurring holiday/series events
+# (Messiah, WC Orch) trend upward post-pandemic; averaging 10+ years of
+# history dilutes the current trajectory. Take only the N most recent
+# seasons per repeat tag.
+REPEAT_ROLLING_WINDOW = 3
+
+# Pandemic-era events are excluded from the repeat layer — attendance during
+# shutdown / restricted-capacity periods doesn't reflect recurring-event draw.
+# (Other hierarchy levels still use this data, weighted by season.)
+PANDEMIC_START = pd.Timestamp('2020-03-10')
+PANDEMIC_END   = pd.Timestamp('2022-06-30')
+
 
 def assign_season_weight(season):
     if pd.isnull(season): return 1.0
@@ -43,10 +61,10 @@ def load_data():
     df['Quantity'] = pd.to_numeric(df.get('Quantity'), errors='coerce').fillna(0)
     df['TicketTotal'] = pd.to_numeric(df.get('TicketTotal'), errors='coerce').fillna(0)
 
-    # Merge from manifest: EventLoB only (EventSubGenre stays from CSV to avoid collision)
+    # Merge from manifest: EventLoB + EventRepeat (EventSubGenre stays from CSV to avoid collision)
     manifest_meta = em.drop_duplicates(subset='EventId')[
         ['EventId', 'EventName', 'EventStatus', 'EventType', 'EventClass',
-         'EventVenue', 'EventGenre', 'EventLoB', 'EventCapacity']
+         'EventVenue', 'EventGenre', 'EventLoB', 'EventRepeat', 'EventCapacity']
     ].copy()
     for c in ['EventStatus', 'EventType']:
         manifest_meta[c] = manifest_meta[c].astype(str).str.strip().str.title()
@@ -65,6 +83,9 @@ def load_data():
     merged['EventLoB'] = merged['EventLoB'].fillna('Concert')
     if 'EventSubGenre' not in merged.columns:
         merged['EventSubGenre'] = np.nan
+    if 'EventRepeat' in merged.columns:
+        merged['EventRepeat'] = merged['EventRepeat'].astype(str).str.strip()
+        merged.loc[merged['EventRepeat'].isin(['nan', 'None', '']), 'EventRepeat'] = pd.NA
 
     return em, merged
 
@@ -83,22 +104,47 @@ def get_training_df(merged, training_seasons):
 
 
 def build_hierarchy_models(filtered):
-    """5-level hierarchy: (Class,Venue,LoB,SubGenre) → (Class,Venue,SubGenre)
-       → (Class,Venue,Genre) → (Class,Venue) → (SubGenre)"""
+    """Hierarchy: EventRepeat (if tagged) → (Class,Venue,LoB,SubGenre)
+       → (Class,Venue,SubGenre) → (Class,Venue,Genre) → (Class,Venue)
+       → (SubGenre) → (EventClass)"""
+    gb_cols = ['EventId', 'EventName', 'EventClass', 'EventVenue',
+               'EventGenre', 'EventLoB', 'EventSubGenre', 'Season']
+    if 'EventRepeat' in filtered.columns:
+        gb_cols = gb_cols + ['EventRepeat']
     ea = (
         filtered
-        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
-                  'EventGenre', 'EventLoB', 'EventSubGenre', 'Season'],
-                 group_keys=False)
+        .groupby(gb_cols, group_keys=False, dropna=False)
         .agg(TotalTickets=('Quantity', 'sum'), Weight=('Weight', 'first'),
-             EventCapacity=('EventCapacity', 'max'))
+             EventCapacity=('EventCapacity', 'max'),
+             EventDate=('EventDate', 'max'))
         .reset_index()
     )
+    ea['EventDate'] = pd.to_datetime(ea['EventDate'], errors='coerce')
 
     def wg_avg(g):
         wt = (g['TotalTickets'] * g['Weight']).sum()
         tw = g['Weight'].sum()
         return wt / tw if tw > 0 else np.nan
+
+    # Repeat-series bucket — uses manual EventRepeat tag. Same artist across
+    # venues/subgenres shares this prior (e.g. Yo-Yo Ma, Vengerov, MacMaster).
+    # Rolling window: take the REPEAT_ROLLING_WINDOW most recent seasons per tag
+    # so upward trends (Messiah post-pandemic) aren't diluted by ancient history.
+    def rolling_wg_avg(g):
+        recent = g.sort_values('Season', ascending=False).head(REPEAT_ROLLING_WINDOW)
+        return wg_avg(recent)
+
+    if 'EventRepeat' in ea.columns:
+        pandemic_mask = ea['EventDate'].between(PANDEMIC_START, PANDEMIC_END)
+        ea_rep = ea[ea['EventRepeat'].notna() & (ea['EventRepeat'] != '') & ~pandemic_mask]
+        repeat_model = (
+            ea_rep.groupby(['EventRepeat'], group_keys=False)
+            .apply(lambda g: pd.Series({'WA_rep': rolling_wg_avg(g),
+                                         'RepeatCount': min(len(g), REPEAT_ROLLING_WINDOW)}))
+            .reset_index()
+        )
+    else:
+        repeat_model = pd.DataFrame(columns=['EventRepeat', 'WA_rep', 'RepeatCount'])
 
     primary = (
         ea.groupby(['EventClass', 'EventVenue', 'EventLoB', 'EventSubGenre'], group_keys=False)
@@ -126,7 +172,7 @@ def build_hierarchy_models(filtered):
         ea.groupby(['EventClass'], group_keys=False)
         .apply(lambda g: pd.Series({'WA_f5': wg_avg(g)})).reset_index()
     )
-    return primary, f1, f2, f3, f4, f5
+    return repeat_model, primary, f1, f2, f3, f4, f5
 
 
 def build_name_model(filtered):
@@ -149,10 +195,20 @@ def build_name_model(filtered):
     return name_model
 
 
-def predict_model_a(events_df, primary, f1, f2, f3, f4, f5=None):
+def predict_model_a(events_df, repeat_model, primary, f1, f2, f3, f4, f5=None):
     fc = events_df.copy()
     for col in ['EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre']:
         fc[col] = fc[col].astype(str).str.strip()
+
+    has_repeat_col = 'EventRepeat' in fc.columns and repeat_model is not None \
+                     and not repeat_model.empty
+    if has_repeat_col:
+        fc = fc.merge(repeat_model, on='EventRepeat', how='left')
+        # Gate single-obs repeat tags — one observation is too thin a prior
+        # and leaks into unrelated sub-events that share the same tag.
+        fc.loc[fc['RepeatCount'] < MIN_REPEAT_OBS, 'WA_rep'] = np.nan
+    else:
+        fc['WA_rep'] = np.nan
 
     fc = fc.merge(primary, on=['EventClass', 'EventVenue', 'EventLoB', 'EventSubGenre'], how='left')
     fc = fc.merge(f1, on=['EventClass', 'EventVenue', 'EventSubGenre'], how='left')
@@ -163,7 +219,8 @@ def predict_model_a(events_df, primary, f1, f2, f3, f4, f5=None):
         fc = fc.merge(f5, on='EventClass', how='left')
 
     preds = (
-        fc['WA_p']
+        fc['WA_rep']
+        .combine_first(fc['WA_p'])
         .combine_first(fc['WA_f1'])
         .combine_first(fc['WA_f2'])
         .combine_first(fc['WA_f3'])
@@ -174,13 +231,15 @@ def predict_model_a(events_df, primary, f1, f2, f3, f4, f5=None):
     fc['Pred_A'] = preds
 
     conditions = [
-        fc['WA_p'].notna(),
-        fc['WA_p'].isna() & fc['WA_f1'].notna(),
-        fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].notna(),
-        fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].notna(),
-        fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f4'].notna(),
+        fc['WA_rep'].notna(),
+        fc['WA_rep'].isna() & fc['WA_p'].notna(),
+        fc['WA_rep'].isna() & fc['WA_p'].isna() & fc['WA_f1'].notna(),
+        fc['WA_rep'].isna() & fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].notna(),
+        fc['WA_rep'].isna() & fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].notna(),
+        fc['WA_rep'].isna() & fc['WA_p'].isna() & fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f4'].notna(),
     ]
-    choices = ['Primary (Class+Venue+LoB+SubGenre)',
+    choices = ['Repeat (EventRepeat)',
+               'Primary (Class+Venue+LoB+SubGenre)',
                'F1 (Class+Venue+SubGenre)',
                'F2 (Class+Venue+Genre)',
                'F3 (Class+Venue)',
@@ -228,7 +287,7 @@ def main():
     filtered_train = get_training_df(merged, all_prior)
 
     # Build models
-    primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
+    repeat_model, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
     # Get 25-26 completed events with actuals
@@ -241,7 +300,7 @@ def main():
             (merged['Quantity'] > 0)
         ]
         .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
-                  'EventGenre', 'EventLoB', 'EventSubGenre'], group_keys=False)
+                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat'], group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
@@ -252,7 +311,7 @@ def main():
     actuals_2526 = actuals_2526.merge(cap, on='EventId', how='left')
 
     # Generate predictions
-    fc = predict_model_a(actuals_2526, primary, f1, f2, f3, f4, f5)
+    fc = predict_model_a(actuals_2526, repeat_model, primary, f1, f2, f3, f4, f5)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
@@ -262,12 +321,12 @@ def main():
     hist_actuals = (
         filtered_train
         .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
-                  'EventGenre', 'EventLoB', 'EventSubGenre'], group_keys=False)
+                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat'], group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
     hist_actuals = hist_actuals.merge(cap, on='EventId', how='left')
-    hist_fc = predict_model_a(hist_actuals, primary, f1, f2, f3, f4, f5)
+    hist_fc = predict_model_a(hist_actuals, repeat_model, primary, f1, f2, f3, f4, f5)
 
     fc = apply_artist_adjustment(
         fc,

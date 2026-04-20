@@ -90,14 +90,15 @@ GENRE_FIT = {
     "Bach Choir":   0.9,
     "Cantata":      0.9,
     "Ballet":       0.8,
-    # Crossover — folk/world/Americana artists who draw a classical-curious
-    # audience (MacMaster & Leahy, Silkroad, Sam Bush caliber). Tag in the
-    # manifest to promote from the 0.3 world/folk default into this class.
-    "Crossover":    0.8,
+    # World/Crossover — merged SubGenre for global/genre-bending acts at MW.
+    # Averages the prior Crossover (0.8, classical-curious audience: MacMaster,
+    # Silkroad, Sam Bush) and World (0.3, spectacle/ensemble: Bollywood,
+    # Chinese Acrobats) priors, gated by MIN_GENRE_FIT=0.7 so it falls below
+    # the signal threshold by default unless lifted by strong Wiki/Deezer.
+    "World/Crossover": 0.5,
     "Jazz":         0.5,
     "Contemporary": 0.5,
     "Americana":    0.3,
-    "World":        0.3,
     "Gospel":       0.3,
     "Folk":         0.3,
 }

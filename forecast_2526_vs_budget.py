@@ -60,7 +60,7 @@ def load_model_data():
     all_prior = sorted([s for s in merged['Season'].dropna().unique()
                         if s < FORECAST_SEASON])
     filtered_train = get_training_df(merged, all_prior)
-    primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
+    repeat_model, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
     cap = em.drop_duplicates('EventId')[['EventId', 'EventCapacity']].copy()
@@ -76,7 +76,7 @@ def load_model_data():
     )
     events_2526 = events_2526.merge(cap, on='EventId', how='left')
 
-    fc = predict_model_a(events_2526, primary, f1, f2, f3, f4, f5)
+    fc = predict_model_a(events_2526, repeat_model, primary, f1, f2, f3, f4, f5)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
