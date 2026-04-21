@@ -108,8 +108,9 @@ def load_data():
 
 
 def get_training_df(merged, training_seasons):
-    # Exclude PWYW / free-admission events from priors — their draw reflects
-    # pricing, not artist pull, and contaminates paid-event buckets.
+    # PWYW / free-admission events are excluded from bucket priors (their draw
+    # reflects pricing, not artist pull), but kept separately for PWYW-lift
+    # calibration — see build_pwyw_lift().
     mask = merged['Quantity'] > 0 if INCLUDE_COMPS else merged['TicketTotal'] > 0
     pricing = merged.get('Pricing', pd.Series(pd.NA, index=merged.index))
     is_paid = ~pricing.astype(str).str.upper().isin(['PWYW', 'FREE'])
@@ -123,6 +124,49 @@ def get_training_df(merged, training_seasons):
     ].copy()
     filtered['Weight'] = filtered['Season'].apply(assign_season_weight)
     return filtered
+
+
+def build_pwyw_lift(merged, training_seasons, repeat_model, primary_sf, sf_ratio,
+                    primary, f1, f2, f3, f4, f5):
+    """Multiplicative PWYW lift: geometric mean of (actual / paid-bucket-pred)
+    across completed PWYW events in training_seasons. Floored at 1.0 so PWYW
+    is never predicted to draw less than a paid comp would.
+
+    Returns (lift, samples_df) — samples_df holds per-event ratios for logging.
+    """
+    if 'Pricing' not in merged.columns:
+        return 1.0, pd.DataFrame()
+    pwyw = merged[
+        (merged['Season'].isin(training_seasons)) &
+        (merged['EventType'] == 'Live') &
+        (merged['EventStatus'] == 'Complete') &
+        (merged['TicketStatus'] == 'Active') &
+        (merged['Pricing'].astype(str).str.upper() == 'PWYW') &
+        (merged['Quantity'] > 0)
+    ]
+    if pwyw.empty:
+        return 1.0, pd.DataFrame()
+    gb = ['EventId', 'EventName', 'EventClass', 'EventVenue',
+          'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat']
+    if 'SeatFormat' in pwyw.columns:
+        gb.append('SeatFormat')
+    pwyw_events = (
+        pwyw.groupby(gb, group_keys=False, dropna=False)
+        .agg(Actual=('Quantity', 'sum'),
+             EventCapacity=('EventCapacity', 'max'))
+        .reset_index()
+    )
+    fc = predict_model_a(pwyw_events, repeat_model, primary_sf, sf_ratio,
+                         primary, f1, f2, f3, f4, f5)
+    # Use uncapped paid prediction as the denominator — actuals can be
+    # capacity-bounded, so capping the denominator would understate the lift.
+    valid = fc[(fc['Pred_A'] > 0) & fc['Actual'].notna()].copy()
+    if valid.empty:
+        return 1.0, valid
+    valid['Ratio'] = valid['Actual'] / valid['Pred_A']
+    lift = float(np.exp(np.log(valid['Ratio']).mean()))
+    lift = max(lift, 1.0)
+    return lift, valid[['EventName', 'Actual', 'Pred_A', 'Ratio']]
 
 
 def build_hierarchy_models(filtered):
@@ -251,7 +295,7 @@ def build_name_model(filtered):
 
 
 def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
-                    primary, f1, f2, f3, f4, f5=None):
+                    primary, f1, f2, f3, f4, f5=None, pwyw_lift=1.0):
     fc = events_df.copy()
     for col in ['EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre']:
         fc[col] = fc[col].astype(str).str.strip()
@@ -334,6 +378,15 @@ def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
                'F3 (Class+Venue)',
                'F4 (SubGenre)']
     fc['FallbackLevel'] = np.select(conditions, choices, default='F5 (EventClass)')
+
+    # PWYW lift — multiplicative boost for pay-what-you-will / free events
+    # (calibrated from historical PWYW residuals vs paid-bucket predictions).
+    if 'Pricing' in fc.columns and pwyw_lift != 1.0:
+        is_pwyw = fc['Pricing'].astype(str).str.upper() == 'PWYW'
+        fc.loc[is_pwyw, 'Pred_A'] = fc.loc[is_pwyw, 'Pred_A'] * pwyw_lift
+        fc.loc[is_pwyw, 'FallbackLevel'] = (
+            fc.loc[is_pwyw, 'FallbackLevel'] + f' × PWYW lift {pwyw_lift:.2f}'
+        )
     return fc
 
 
@@ -379,6 +432,14 @@ def main():
     repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
+    # PWYW lift calibrated on prior-season PWYW events only (no leakage)
+    pwyw_lift, pwyw_samples = build_pwyw_lift(
+        merged, all_prior, repeat_model, primary_sf, sf_ratio,
+        primary, f1, f2, f3, f4, f5)
+    print(f"\nPWYW lift: {pwyw_lift:.2f}x  (calibrated on n={len(pwyw_samples)} prior-season PWYW events)")
+    if len(pwyw_samples):
+        print(pwyw_samples.to_string(index=False))
+
     # Get 25-26 completed events with actuals
     actuals_2526 = (
         merged[
@@ -390,7 +451,7 @@ def main():
         ]
         .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
                   'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat',
-                  'SeatFormat'], group_keys=False, dropna=False)
+                  'SeatFormat', 'Pricing'], group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
@@ -401,7 +462,8 @@ def main():
     actuals_2526 = actuals_2526.merge(cap, on='EventId', how='left')
 
     # Generate predictions
-    fc = predict_model_a(actuals_2526, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
+    fc = predict_model_a(actuals_2526, repeat_model, primary_sf, sf_ratio,
+                         primary, f1, f2, f3, f4, f5, pwyw_lift=pwyw_lift)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
@@ -412,7 +474,7 @@ def main():
         filtered_train
         .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
                   'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat',
-                  'SeatFormat'], group_keys=False, dropna=False)
+                  'SeatFormat', 'Pricing'], group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
