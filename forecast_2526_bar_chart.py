@@ -52,10 +52,11 @@ def forecast_upcoming():
 
     prior_seasons = sorted([s for s in merged["Season"].dropna().unique() if s < "25-26"])
     train = get_training_df(merged, prior_seasons)
-    repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(train)
+    (repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f3a, f3b, f4, f5
+     ) = build_hierarchy_models(train)
     pwyw_lift, _ = build_pwyw_lift(
         merged, prior_seasons, repeat_model, primary_sf, sf_ratio,
-        primary, f1, f2, f3, f4, f5)
+        primary, f1, f2, f3, f3a, f3b, f4, f5)
 
     em["EventDate"] = pd.to_datetime(em["EventDate"], errors="coerce")
     today = pd.Timestamp.today().normalize()
@@ -71,14 +72,16 @@ def forecast_upcoming():
     upc["EventCapacity"] = pd.to_numeric(upc["EventCapacity"], errors="coerce")
 
     fc = predict_model_a(upc, repeat_model, primary_sf, sf_ratio,
-                         primary, f1, f2, f3, f4, f5, pwyw_lift=pwyw_lift)
+                         primary, f1, f2, f3, f3a, f3b, f4, f5, pwyw_lift=pwyw_lift)
     fc["Pred_A"] = cap_at_capacity(fc["Pred_A"], fc["EventCapacity"])
 
+    hist_gb = ["EventId", "EventName", "EventClass", "EventVenue",
+               "EventGenre", "EventLoB", "EventSubGenre", "EventRepeat"]
+    for c in ("SeatFormat", "VenueType"):
+        if c in train.columns:
+            hist_gb.append(c)
     hist_actuals = (
-        train.groupby(["EventId", "EventName", "EventClass", "EventVenue",
-                       "EventGenre", "EventLoB", "EventSubGenre",
-                       "EventRepeat", "SeatFormat"],
-                      group_keys=False, dropna=False)
+        train.groupby(hist_gb, group_keys=False, dropna=False)
         .agg(Actual=("Quantity", "sum"))
         .reset_index()
     )
@@ -86,7 +89,7 @@ def forecast_upcoming():
     cap["EventCapacity"] = pd.to_numeric(cap["EventCapacity"], errors="coerce")
     hist_actuals = hist_actuals.merge(cap, on="EventId", how="left")
     hist_fc = predict_model_a(hist_actuals, repeat_model, primary_sf, sf_ratio,
-                              primary, f1, f2, f3, f4, f5)
+                              primary, f1, f2, f3, f3a, f3b, f4, f5)
 
     fc = apply_artist_adjustment(
         fc,
@@ -211,6 +214,89 @@ def plot_bar_chart(df):
     print(f"  ✓ {out}")
 
 
+def plot_bar_chart_wide(df):
+    """Landscape, two-column layout for slide decks."""
+    n = len(df)
+    half = (n + 1) // 2
+    groups = [df.iloc[:half].reset_index(drop=True),
+              df.iloc[half:].reset_index(drop=True)]
+
+    xmax = max(df["Pred_Adj"].fillna(0).max(),
+               df["Actual"].fillna(0).max()) * 1.18
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.5, 6.6),
+                              gridspec_kw={"wspace": 0.42})
+
+    for ax, grp in zip(axes, groups):
+        m = len(grp)
+        y = np.arange(m)[::-1]
+        bar_h = 0.38
+
+        actual_vals = grp["Actual"].fillna(0).values
+        pred_vals = grp["Pred_Adj"].fillna(0).values
+        is_future = grp["Status"].eq("Upcoming").values
+
+        pred_colors = [PRED_FUT if f else NAVY for f in is_future]
+        ax.barh(y + bar_h / 2, pred_vals, height=bar_h,
+                color=pred_colors, edgecolor="white", linewidth=0.5, zorder=3)
+        actual_mask = ~is_future
+        ax.barh(y[actual_mask] - bar_h / 2, actual_vals[actual_mask],
+                height=bar_h, color=ORANGE, edgecolor="white",
+                linewidth=0.5, zorder=3)
+
+        for yi, v, future in zip(y, pred_vals, is_future):
+            color = DGRAY if future else NAVY
+            ax.text(v + xmax * 0.006, yi + bar_h / 2, f"{int(round(v)):,}",
+                    va="center", ha="left", fontsize=7.2, color=color,
+                    fontweight="bold" if not future else "normal")
+        for yi, v, future in zip(y, actual_vals, is_future):
+            if future:
+                continue
+            ax.text(v + xmax * 0.006, yi - bar_h / 2, f"{int(round(v)):,}",
+                    va="center", ha="left", fontsize=7.2, color=ORANGE,
+                    fontweight="bold")
+
+        labels = [f"{shorten(r.EventName)}   {r.EventDate:%b %d}"
+                  for r in grp.itertuples()]
+        ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=8)
+        ax.set_xlim(0, xmax)
+        ax.grid(axis="x", color=LGRAY, linewidth=0.7, zorder=0)
+        ax.set_axisbelow(True)
+        ax.spines["left"].set_color(LGRAY)
+        ax.spines["bottom"].set_color(LGRAY)
+        ax.tick_params(axis="x", labelsize=8)
+
+    done = df[df["Status"] == "Completed"].copy()
+    done["abs_pct"] = (done["Pred_Adj"] - done["Actual"]).abs() / done["Actual"]
+    done["signed_pct"] = (done["Pred_Adj"] - done["Actual"]) / done["Actual"]
+    mape = done["abs_pct"].mean() * 100
+    bias = done["signed_pct"].mean() * 100
+    n_done = len(done)
+    n_upc = (df["Status"] == "Upcoming").sum()
+
+    fig.suptitle("25–26 Season: Predicted vs Actual Attendance",
+                 fontsize=14, fontweight="bold", color=NAVY,
+                 x=0.02, ha="left", y=0.995)
+    subtitle = (f"{n_done} completed  ·  MAPE {mape:.0f}%  ·  "
+                f"Bias {bias:+.0f}%  ·  {n_upc} upcoming (prediction only)")
+    fig.text(0.02, 0.955, subtitle, ha="left", va="top",
+             fontsize=10, color=DGRAY)
+
+    handles = [
+        Patch(facecolor=ORANGE, label="Actual"),
+        Patch(facecolor=NAVY, label="Predicted (completed)"),
+        Patch(facecolor=PRED_FUT, label="Predicted (upcoming)"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=9,
+               frameon=False, bbox_to_anchor=(0.5, -0.015))
+
+    fig.tight_layout(rect=[0, 0.02, 1, 0.93])
+    out = "forecast_2526_bar_chart_wide.png"
+    fig.savefig(out, dpi=180, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"  ✓ {out}")
+
+
 def main():
     df = build_combined()
     print(f"Combined: {len(df)} events "
@@ -218,6 +304,7 @@ def main():
           f"{(df['Status']=='Upcoming').sum()} upcoming)")
     print(df[["EventDate", "EventName", "Status", "Actual", "Pred_Adj"]].to_string(index=False))
     plot_bar_chart(df)
+    plot_bar_chart_wide(df)
 
 
 if __name__ == "__main__":

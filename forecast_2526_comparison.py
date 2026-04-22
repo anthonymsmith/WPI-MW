@@ -45,6 +45,16 @@ PANDEMIC_END   = pd.Timestamp('2022-06-30')
 # non-SeatFormat bucket, adjusted by the venue-wide Floor-vs-Full ratio.
 MIN_SEATFORMAT_OBS = 3
 
+# Empirical Bayes shrinkage strength for thin Primary / F1 buckets.
+# Primary bucket mean is blended toward the broader (Class, Venue) fallback:
+#   shrunk = (N * WA + K * WA_fallback) / (N + K)
+# With K=3, a bucket with N=2 is ~40% its own mean + 60% fallback; a bucket
+# with N=15 is ~83% own + 17% fallback. Motivation: thin buckets like
+# (Standard, MH, Concert, World/Crossover) [n=2, Chinese Acrobats + Martial
+# Artists] were dragging predictions toward 933 while the broader
+# Standard-at-MH prior sits around 500.
+SHRINKAGE_K = 3.0
+
 
 def assign_season_weight(season):
     if pd.isnull(season): return 1.0
@@ -66,7 +76,7 @@ def load_data():
     df['Quantity'] = pd.to_numeric(df.get('Quantity'), errors='coerce').fillna(0)
     df['TicketTotal'] = pd.to_numeric(df.get('TicketTotal'), errors='coerce').fillna(0)
 
-    # Merge from manifest: EventLoB + EventRepeat + Pricing + SeatFormat
+    # Merge from manifest: EventLoB + EventRepeat + Pricing + SeatFormat + VenueType
     # (EventSubGenre stays from CSV to avoid collision)
     meta_cols = ['EventId', 'EventName', 'EventStatus', 'EventType', 'EventClass',
                  'EventVenue', 'EventGenre', 'EventLoB', 'EventRepeat', 'EventCapacity']
@@ -76,6 +86,10 @@ def load_data():
         em = em.rename(columns={'Seat Format': 'SeatFormat'})
     if 'SeatFormat' in em.columns:
         meta_cols.append('SeatFormat')
+    if 'Venue Type' in em.columns:
+        em = em.rename(columns={'Venue Type': 'VenueType'})
+    if 'VenueType' in em.columns:
+        meta_cols.append('VenueType')
     manifest_meta = em.drop_duplicates(subset='EventId')[meta_cols].copy()
     for c in ['EventStatus', 'EventType']:
         manifest_meta[c] = manifest_meta[c].astype(str).str.strip().str.title()
@@ -103,6 +117,9 @@ def load_data():
     if 'SeatFormat' in merged.columns:
         merged['SeatFormat'] = merged['SeatFormat'].astype(str).str.strip()
         merged.loc[merged['SeatFormat'].isin(['nan', 'None', '']), 'SeatFormat'] = pd.NA
+    if 'VenueType' in merged.columns:
+        merged['VenueType'] = merged['VenueType'].astype(str).str.strip()
+        merged.loc[merged['VenueType'].isin(['nan', 'None', '']), 'VenueType'] = pd.NA
 
     return em, merged
 
@@ -127,7 +144,7 @@ def get_training_df(merged, training_seasons):
 
 
 def build_pwyw_lift(merged, training_seasons, repeat_model, primary_sf, sf_ratio,
-                    primary, f1, f2, f3, f4, f5):
+                    primary, f1, f2, f3, f3a, f3b, f4, f5):
     """Multiplicative PWYW lift: geometric mean of (actual / paid-bucket-pred)
     across completed PWYW events in training_seasons. Floored at 1.0 so PWYW
     is never predicted to draw less than a paid comp would.
@@ -157,14 +174,22 @@ def build_pwyw_lift(merged, training_seasons, repeat_model, primary_sf, sf_ratio
         .reset_index()
     )
     fc = predict_model_a(pwyw_events, repeat_model, primary_sf, sf_ratio,
-                         primary, f1, f2, f3, f4, f5)
+                         primary, f1, f2, f3, f3a, f3b, f4, f5)
     # Use uncapped paid prediction as the denominator — actuals can be
     # capacity-bounded, so capping the denominator would understate the lift.
     valid = fc[(fc['Pred_A'] > 0) & fc['Actual'].notna()].copy()
     if valid.empty:
         return 1.0, valid
     valid['Ratio'] = valid['Actual'] / valid['Pred_A']
-    lift = float(np.exp(np.log(valid['Ratio']).mean()))
+    lift_empirical = float(np.exp(np.log(valid['Ratio']).mean()))
+    # Bayesian shrinkage toward 1.0 (no lift) with prior K.
+    # Current calibration sample is n=1 (Dinnerstein 16-17 fully-free orchestra
+    # headliner) — not representative of typical PWYW which has tiered pricing
+    # with a $0-5 floor. Pull empirical toward 1.0 until more data accumulates.
+    # With K=3 and N=1 empirical=2.88 → shrunk ≈ 1.47.
+    K = 3.0
+    n = len(valid)
+    lift = (n * lift_empirical + K * 1.0) / (n + K)
     lift = max(lift, 1.0)
     return lift, valid[['EventName', 'Actual', 'Pred_A', 'Ratio']]
 
@@ -180,6 +205,8 @@ def build_hierarchy_models(filtered):
         gb_cols = gb_cols + ['EventRepeat']
     if 'SeatFormat' in filtered.columns:
         gb_cols = gb_cols + ['SeatFormat']
+    if 'VenueType' in filtered.columns:
+        gb_cols = gb_cols + ['VenueType']
     ea = (
         filtered
         .groupby(gb_cols, group_keys=False, dropna=False)
@@ -245,22 +272,137 @@ def build_hierarchy_models(filtered):
                                             'SeatFormat', 'WA_psf', 'N_psf'])
         sf_ratio = pd.DataFrame(columns=['EventVenue', 'SeatFormat', 'Ratio'])
 
+    # A bucket is "recurring" if at least one EventName within it appears in
+    # 2+ prior seasons. Those buckets are trusted as-is: the signal is a real
+    # series, not noise. Non-recurring thin buckets (random spectacle events
+    # that share a bucket only by happenstance) are the ones we shrink.
+    def _has_recurring(g):
+        return int((g.groupby('EventName')['Season'].nunique() >= 2).any())
+
     primary = (
         ea.groupby(['EventClass', 'EventVenue', 'EventLoB', 'EventSubGenre'], group_keys=False)
-        .apply(lambda g: pd.Series({'WA_p': wg_avg(g)})).reset_index()
+        .apply(lambda g: pd.Series({
+            'WA_p_raw': wg_avg(g),
+            'N_p': len(g),
+            'HasRecurring_p': _has_recurring(g),
+        })).reset_index()
     )
     f1 = (
         ea.groupby(['EventClass', 'EventVenue', 'EventSubGenre'], group_keys=False)
-        .apply(lambda g: pd.Series({'WA_f1': wg_avg(g)})).reset_index()
+        .apply(lambda g: pd.Series({
+            'WA_f1_raw': wg_avg(g),
+            'N_f1': len(g),
+            'HasRecurring_f1': _has_recurring(g),
+        })).reset_index()
     )
     f2 = (
         ea.groupby(['EventClass', 'EventVenue', 'EventGenre'], group_keys=False)
-        .apply(lambda g: pd.Series({'WA_f2': wg_avg(g)})).reset_index()
+        .apply(lambda g: pd.Series({
+            'WA_f2_raw': wg_avg(g),
+            'N_f2': len(g),
+        })).reset_index()
     )
     f3 = (
         ea.groupby(['EventClass', 'EventVenue'], group_keys=False)
-        .apply(lambda g: pd.Series({'WA_f3': wg_avg(g)})).reset_index()
+        .apply(lambda g: pd.Series({
+            'WA_f3_raw': wg_avg(g),
+            'N_f3': len(g),
+        })).reset_index()
     )
+
+    # Venue-type pooled fallbacks — slotted between F3 and F4.
+    # F3a: (Class, VenueType, SubGenre) — keeps genre specificity, pools venues
+    # F3b: (Class, VenueType)           — pooled venue-tier prior
+    # These rescue thin-venue events (Curtis Hall, JMAC, small churches) where
+    # the venue-specific chain collapses to 1-2 observations.
+    if 'VenueType' in ea.columns:
+        ea_vt = ea[ea['VenueType'].notna()]
+        f3a = (
+            ea_vt.groupby(['EventClass', 'VenueType', 'EventSubGenre'], group_keys=False)
+            .apply(lambda g: pd.Series({'WA_f3a': wg_avg(g)})).reset_index()
+        )
+        f3b = (
+            ea_vt.groupby(['EventClass', 'VenueType'], group_keys=False)
+            .apply(lambda g: pd.Series({'WA_f3b': wg_avg(g)})).reset_index()
+        )
+    else:
+        f3a = pd.DataFrame(columns=['EventClass', 'VenueType', 'EventSubGenre', 'WA_f3a'])
+        f3b = pd.DataFrame(columns=['EventClass', 'VenueType', 'WA_f3b'])
+
+    # F3 shrinkage toward F3b (pooled venue-tier). Symmetric — unlike Primary/F1,
+    # thin F3 buckets at small venues tend to sit *below* the venue-tier pool
+    # (Curtis Hall Standard = 107 vs Standard-at-Small tier ~250), so asymmetric
+    # wouldn't rescue them. With K=3, a thin venue with N=2 gets ~40% own mean +
+    # 60% pool; a well-trafficked venue (MH, N=50) barely moves.
+    if 'VenueType' in ea.columns:
+        venue_vt = (ea[['EventVenue', 'VenueType']]
+                    .dropna().drop_duplicates('EventVenue'))
+        f3 = f3.merge(venue_vt, on='EventVenue', how='left')
+        f3 = f3.merge(f3b, on=['EventClass', 'VenueType'], how='left')
+        f3['WA_f3_shrunk'] = (
+            (f3['N_f3'] * f3['WA_f3_raw'] + SHRINKAGE_K * f3['WA_f3b'])
+            / (f3['N_f3'] + SHRINKAGE_K)
+        )
+        f3['WA_f3'] = f3['WA_f3_shrunk'].fillna(f3['WA_f3_raw'])
+        f3 = f3.drop(columns=['WA_f3_raw', 'WA_f3_shrunk', 'N_f3',
+                              'WA_f3b', 'VenueType'])
+    else:
+        f3 = f3.rename(columns={'WA_f3_raw': 'WA_f3'}).drop(columns=['N_f3'])
+
+    # F2 shrinkage toward (already-shrunk) F3. Same motivation as F3 shrinkage:
+    # F2 averages across subgenres at a venue, so thin buckets (Catherine Russell
+    # at JMAC: one Jazz event) are noisy estimators. Pull toward the venue's
+    # all-genre mean. Symmetric — thin-venue Jazz/Chamber buckets tend to sit
+    # below the venue pool.
+    f2 = f2.merge(
+        f3[['EventClass', 'EventVenue', 'WA_f3']],
+        on=['EventClass', 'EventVenue'], how='left')
+    f2['WA_f2_shrunk'] = (
+        (f2['N_f2'] * f2['WA_f2_raw'] + SHRINKAGE_K * f2['WA_f3'])
+        / (f2['N_f2'] + SHRINKAGE_K)
+    )
+    f2['WA_f2'] = f2['WA_f2_shrunk'].fillna(f2['WA_f2_raw'])
+    f2 = f2.drop(columns=['WA_f2_raw', 'WA_f2_shrunk', 'N_f2', 'WA_f3'])
+
+    # Empirical Bayes shrinkage: thin Primary / F1 buckets get pulled toward
+    # their (Class, Venue) fallback mean. Thick buckets stay near their
+    # observed average.
+    primary = primary.merge(
+        f3[['EventClass', 'EventVenue', 'WA_f3']],
+        on=['EventClass', 'EventVenue'], how='left')
+    primary['WA_p_shrunk'] = (
+        (primary['N_p'] * primary['WA_p_raw'] + SHRINKAGE_K * primary['WA_f3'])
+        / (primary['N_p'] + SHRINKAGE_K)
+    )
+    # Asymmetric + recurring-series exemption: only pull toward fallback when
+    # the raw mean exceeds the fallback AND the bucket has no recurring series.
+    # Leaves both genuinely-low thin buckets (e.g. niche recitals) and
+    # legitimately-high repeat series (e.g. Handel Messiah) alone.
+    primary['WA_p'] = np.where(
+        (primary['WA_p_raw'] > primary['WA_f3']) & (primary['HasRecurring_p'] == 0),
+        primary['WA_p_shrunk'],
+        primary['WA_p_raw'],
+    )
+    primary['WA_p'] = primary['WA_p'].fillna(primary['WA_p_raw'])
+    primary = primary.drop(columns=['WA_p_raw', 'WA_p_shrunk', 'N_p', 'WA_f3',
+                                      'HasRecurring_p'])
+
+    f1 = f1.merge(
+        f3[['EventClass', 'EventVenue', 'WA_f3']],
+        on=['EventClass', 'EventVenue'], how='left')
+    f1['WA_f1_shrunk'] = (
+        (f1['N_f1'] * f1['WA_f1_raw'] + SHRINKAGE_K * f1['WA_f3'])
+        / (f1['N_f1'] + SHRINKAGE_K)
+    )
+    f1['WA_f1'] = np.where(
+        (f1['WA_f1_raw'] > f1['WA_f3']) & (f1['HasRecurring_f1'] == 0),
+        f1['WA_f1_shrunk'],
+        f1['WA_f1_raw'],
+    )
+    f1['WA_f1'] = f1['WA_f1'].fillna(f1['WA_f1_raw'])
+    f1 = f1.drop(columns=['WA_f1_raw', 'WA_f1_shrunk', 'N_f1', 'WA_f3',
+                            'HasRecurring_f1'])
+
     f4 = (
         ea.groupby(['EventSubGenre'], group_keys=False)
         .apply(lambda g: pd.Series({'WA_f4': wg_avg(g)})).reset_index()
@@ -271,7 +413,7 @@ def build_hierarchy_models(filtered):
         ea.groupby(['EventClass'], group_keys=False)
         .apply(lambda g: pd.Series({'WA_f5': wg_avg(g)})).reset_index()
     )
-    return repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5
+    return repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f3a, f3b, f4, f5
 
 
 def build_name_model(filtered):
@@ -295,10 +437,13 @@ def build_name_model(filtered):
 
 
 def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
-                    primary, f1, f2, f3, f4, f5=None, pwyw_lift=1.0):
+                    primary, f1, f2, f3, f3a, f3b, f4, f5=None, pwyw_lift=1.0):
     fc = events_df.copy()
     for col in ['EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre']:
         fc[col] = fc[col].astype(str).str.strip()
+    if 'VenueType' in fc.columns:
+        fc['VenueType'] = fc['VenueType'].astype(str).str.strip()
+        fc.loc[fc['VenueType'].isin(['nan', 'None', '']), 'VenueType'] = pd.NA
 
     has_repeat_col = 'EventRepeat' in fc.columns and repeat_model is not None \
                      and not repeat_model.empty
@@ -328,6 +473,13 @@ def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
     fc = fc.merge(f1, on=['EventClass', 'EventVenue', 'EventSubGenre'], how='left')
     fc = fc.merge(f2, on=['EventClass', 'EventVenue', 'EventGenre'], how='left')
     fc = fc.merge(f3, on=['EventClass', 'EventVenue'], how='left')
+    has_vt = 'VenueType' in fc.columns and f3a is not None and not f3a.empty
+    if has_vt:
+        fc = fc.merge(f3a, on=['EventClass', 'VenueType', 'EventSubGenre'], how='left')
+        fc = fc.merge(f3b, on=['EventClass', 'VenueType'], how='left')
+    else:
+        fc['WA_f3a'] = np.nan
+        fc['WA_f3b'] = np.nan
     fc = fc.merge(f4, on='EventSubGenre', how='left')
     if f5 is not None:
         fc = fc.merge(f5, on='EventClass', how='left')
@@ -339,6 +491,8 @@ def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
         .combine_first(fc['WA_f1'])
         .combine_first(fc['WA_f2'])
         .combine_first(fc['WA_f3'])
+        .combine_first(fc['WA_f3a'])
+        .combine_first(fc['WA_f3b'])
         .combine_first(fc['WA_f4'])
     )
     if f5 is not None:
@@ -365,7 +519,9 @@ def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
         fc['WA_f1'].notna(),
         fc['WA_f1'].isna() & fc['WA_f2'].notna(),
         fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].notna(),
-        fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f4'].notna(),
+        fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f3a'].notna(),
+        fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f3a'].isna() & fc['WA_f3b'].notna(),
+        fc['WA_f1'].isna() & fc['WA_f2'].isna() & fc['WA_f3'].isna() & fc['WA_f3a'].isna() & fc['WA_f3b'].isna() & fc['WA_f4'].notna(),
     ]
     choices = ['Primary_SF (Class+Venue+LoB+SubGenre+SF)',
                'Repeat (EventRepeat)',
@@ -376,6 +532,8 @@ def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
                'F1 (Class+Venue+SubGenre)',
                'F2 (Class+Venue+Genre)',
                'F3 (Class+Venue)',
+               'F3a (Class+VenueType+SubGenre)',
+               'F3b (Class+VenueType)',
                'F4 (SubGenre)']
     fc['FallbackLevel'] = np.select(conditions, choices, default='F5 (EventClass)')
 
@@ -429,18 +587,24 @@ def main():
     filtered_train = get_training_df(merged, all_prior)
 
     # Build models
-    repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
+    (repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f3a, f3b, f4, f5
+     ) = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
     # PWYW lift calibrated on prior-season PWYW events only (no leakage)
     pwyw_lift, pwyw_samples = build_pwyw_lift(
         merged, all_prior, repeat_model, primary_sf, sf_ratio,
-        primary, f1, f2, f3, f4, f5)
+        primary, f1, f2, f3, f3a, f3b, f4, f5)
     print(f"\nPWYW lift: {pwyw_lift:.2f}x  (calibrated on n={len(pwyw_samples)} prior-season PWYW events)")
     if len(pwyw_samples):
         print(pwyw_samples.to_string(index=False))
 
     # Get 25-26 completed events with actuals
+    actuals_gb = ['EventId', 'EventName', 'EventClass', 'EventVenue',
+                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat']
+    for c in ('SeatFormat', 'Pricing', 'VenueType'):
+        if c in merged.columns:
+            actuals_gb.append(c)
     actuals_2526 = (
         merged[
             (merged['Season'] == FORECAST_SEASON) &
@@ -449,9 +613,7 @@ def main():
             (merged['TicketStatus'] == 'Active') &
             (merged['Quantity'] > 0)
         ]
-        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
-                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat',
-                  'SeatFormat', 'Pricing'], group_keys=False, dropna=False)
+        .groupby(actuals_gb, group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
@@ -463,23 +625,27 @@ def main():
 
     # Generate predictions
     fc = predict_model_a(actuals_2526, repeat_model, primary_sf, sf_ratio,
-                         primary, f1, f2, f3, f4, f5, pwyw_lift=pwyw_lift)
+                         primary, f1, f2, f3, f3a, f3b, f4, f5, pwyw_lift=pwyw_lift)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
 
     # Build labelled history for artist adjustment training
     # Event-level actuals from training seasons
+    hist_gb = ['EventId', 'EventName', 'EventClass', 'EventVenue',
+               'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat']
+    for c in ('SeatFormat', 'Pricing', 'VenueType'):
+        if c in filtered_train.columns:
+            hist_gb.append(c)
     hist_actuals = (
         filtered_train
-        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
-                  'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat',
-                  'SeatFormat', 'Pricing'], group_keys=False, dropna=False)
+        .groupby(hist_gb, group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
     hist_actuals = hist_actuals.merge(cap, on='EventId', how='left')
-    hist_fc = predict_model_a(hist_actuals, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
+    hist_fc = predict_model_a(hist_actuals, repeat_model, primary_sf, sf_ratio,
+                               primary, f1, f2, f3, f3a, f3b, f4, f5)
 
     fc = apply_artist_adjustment(
         fc,

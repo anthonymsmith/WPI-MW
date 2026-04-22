@@ -60,7 +60,8 @@ def load_model_data():
     all_prior = sorted([s for s in merged['Season'].dropna().unique()
                         if s < FORECAST_SEASON])
     filtered_train = get_training_df(merged, all_prior)
-    repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5 = build_hierarchy_models(filtered_train)
+    (repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f3a, f3b, f4, f5
+     ) = build_hierarchy_models(filtered_train)
     name_model = build_name_model(filtered_train)
 
     cap = em.drop_duplicates('EventId')[['EventId', 'EventCapacity']].copy()
@@ -76,22 +77,27 @@ def load_model_data():
     )
     events_2526 = events_2526.merge(cap, on='EventId', how='left')
 
-    fc = predict_model_a(events_2526, repeat_model, primary_sf, sf_ratio, primary, f1, f2, f3, f4, f5)
+    fc = predict_model_a(events_2526, repeat_model, primary_sf, sf_ratio,
+                         primary, f1, f2, f3, f3a, f3b, f4, f5)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
 
     # Artist adjustment (trained on all prior seasons)
+    hist_gb = ['EventId', 'EventName', 'EventClass', 'EventVenue',
+               'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat']
+    for c in ('VenueType',):
+        if c in filtered_train.columns:
+            hist_gb.append(c)
     hist_actuals = (
         filtered_train
-        .groupby(['EventId', 'EventName', 'EventClass', 'EventVenue',
-                  'EventGenre', 'EventLoB', 'EventSubGenre'], group_keys=False)
+        .groupby(hist_gb, group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
         .reset_index()
     )
     hist_actuals = hist_actuals.merge(cap, on='EventId', how='left')
-    from forecast_2526_comparison import predict_model_a as pma
-    hist_fc = pma(hist_actuals, primary, f1, f2, f3, f4)
+    hist_fc = predict_model_a(hist_actuals, repeat_model, primary_sf, sf_ratio,
+                              primary, f1, f2, f3, f3a, f3b, f4, f5)
 
     from forecast_artist_adjustment import apply_artist_adjustment
     fc = apply_artist_adjustment(
