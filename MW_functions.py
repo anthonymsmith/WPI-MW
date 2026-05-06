@@ -661,6 +661,8 @@ def final_processing_and_output(df, output_file, logger, processDonations):
     # Assumes each order (Order Number, CreatedDate) can contain = multiple Events and quantities
     # Note: including OrderStatus and TicketStatus may be excessive. TODO is to prune that down.
     # groupby by columns. Can't include any columns to keep.
+    # IsComp splits mixed comp+paid buckets so max(ItemPrice) can't silently re-price comps.
+    df['IsComp'] = df['ItemPrice'] == 0
     groupby_cols = [
         'OrderNumber',
         'EventName',
@@ -668,7 +670,8 @@ def final_processing_and_output(df, output_file, logger, processDonations):
         'Allocation',
         'TicketType',
         'OrderStatus',
-        'TicketStatus']
+        'TicketStatus',
+        'IsComp']
 
     # aggregation dict
     agg_dict = {
@@ -746,7 +749,7 @@ def final_processing_and_output(df, output_file, logger, processDonations):
                    'Method', 'Origin', 'CreatedDate',
                    'OrderNumber', 'TicketStatus', 'OrderStatus', 'Allocation', 'TicketType','OrderSource',
                    'EventStatus', 'EventType', 'EventClass', 'EventGenre', 'EventSubGenre',
-                   'Quantity', 'ItemPrice', 'TicketTotal', 'PriceLevel', 'AmountPaid', 'DonationName', 'DonationAmount',#'Total',
+                   'Quantity', 'ItemPrice', 'IsComp', 'TicketTotal', 'PriceLevel', 'AmountPaid', 'DonationName', 'DonationAmount',#'Total',
                    'DiscountCode', 'DiscountTotal', 'PreDiscountTotal', 'UnitDiscount', 'UnitDiscountType',
                    'ChorusMember','DuesTxn','Student','Subscriber','PatronStatus',
                    'Choral','Bach','Classical', 'Contemporary', 'Dance',

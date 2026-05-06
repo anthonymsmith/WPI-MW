@@ -159,7 +159,7 @@ def build_pwyw_lift(merged, training_seasons, repeat_model, primary_sf, sf_ratio
         (merged['EventStatus'] == 'Complete') &
         (merged['TicketStatus'] == 'Active') &
         (merged['Pricing'].astype(str).str.upper() == 'PWYW') &
-        (merged['Quantity'] > 0)
+        (merged['Quantity'] > 0 if INCLUDE_COMPS else merged['TicketTotal'] > 0)
     ]
     if pwyw.empty:
         return 1.0, pd.DataFrame()
@@ -611,7 +611,7 @@ def main():
             (merged['EventType'] == 'Live') &
             (merged['EventStatus'] == 'Complete') &
             (merged['TicketStatus'] == 'Active') &
-            (merged['Quantity'] > 0)
+            (merged['Quantity'] > 0 if INCLUDE_COMPS else merged['TicketTotal'] > 0)
         ]
         .groupby(actuals_gb, group_keys=False, dropna=False)
         .agg(Actual=('Quantity', 'sum'))
