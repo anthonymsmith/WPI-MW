@@ -69,6 +69,25 @@ def main():
         .reset_index()
     )
     season = season.merge(actuals, on="EventName", how="left")
+
+    # Overlay actuals for late-season events whose DataMerge transactions
+    # lag the final Salesforce export (we got aggregate totals from MW).
+    # Remove once the next full SF datapull lands.
+    overlay = {
+        "Dance Theatre of Harlem 2026":   (1487, None,  None),
+        "Chorus: Frederick Douglass":     ( 895, 525.0, 370.0),
+        "TCB: Bach Organ & Arias":        ( 193, 129.0,  64.0),
+        "Women's Ensemble & Cantilena":   ( 134, 114.0,  20.0),
+    }
+    for name, (a, p, c) in overlay.items():
+        m = season["EventName"] == name
+        if m.any():
+            season.loc[m, "Actual"] = a
+            if p is not None:
+                season.loc[m, "Actual_Paid"] = p
+            if c is not None:
+                season.loc[m, "Actual_Comp"] = c
+
     season["Status"] = np.where(season["Actual"].notna(), "Completed", "Upcoming")
 
     # Predict

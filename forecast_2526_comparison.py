@@ -90,6 +90,8 @@ def load_data():
         em = em.rename(columns={'Venue Type': 'VenueType'})
     if 'VenueType' in em.columns:
         meta_cols.append('VenueType')
+    if 'FestivalRole' in em.columns:
+        meta_cols.append('FestivalRole')
     manifest_meta = em.drop_duplicates(subset='EventId')[meta_cols].copy()
     for c in ['EventStatus', 'EventType']:
         manifest_meta[c] = manifest_meta[c].astype(str).str.strip().str.title()
@@ -120,6 +122,9 @@ def load_data():
     if 'VenueType' in merged.columns:
         merged['VenueType'] = merged['VenueType'].astype(str).str.strip()
         merged.loc[merged['VenueType'].isin(['nan', 'None', '']), 'VenueType'] = pd.NA
+    if 'FestivalRole' in merged.columns:
+        merged['FestivalRole'] = merged['FestivalRole'].astype(str).str.strip()
+        merged.loc[merged['FestivalRole'].isin(['nan', 'None', '']), 'FestivalRole'] = pd.NA
 
     return em, merged
 
