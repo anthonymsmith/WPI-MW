@@ -63,9 +63,35 @@ def load_forecast():
     return df
 
 
-def shorten(name):
+def shorten(name, cap=15):
     name = str(name).replace(" 2025", "").replace(" 2026", "")
-    return name if len(name) <= 48 else name[:45] + "…"
+    name = name.replace("BACHtoberfest:", "B'Fest:")
+    name = name.replace("Bach's Birthday Bash:", "BBB:")
+    name = name.replace("American Patchwork Quartet", "APQ")
+    name = name.replace("American Spiritual Ensemble", "ASE")
+    name = name.replace("Worcester Chamber Music Society", "WCMS")
+    name = name.replace("Refugee Orchestra Project", "ROP")
+    name = name.replace("Dance Theatre of Harlem", "DTH")
+    name = name.replace("Women's Ensemble", "Wom Chor")
+    name = name.replace("Chorus:", "Chor:")
+    name = name.replace("Ladysmith Black Mambazo", "Ladysmith")
+    name = name.replace("Emi Ferguson & Ruckus", "Ferguson/Ruckus")
+    name = name.replace("Orchestre National de France, Daniil Trifonov", "Trifonov")
+    name = name.replace("TCB: Christmas Oratorio with Winchendon Players", "TCB: X-mas Orat")
+    name = name.replace("TCB: Emmanuel Music: Solo Cantatas", "TCB: Cantatas")
+    name = name.replace("TCB: Old Post Road", "TCB: Old Post")
+    name = name.replace("TCB: Bach Organ & Arias", "TCB: Bach Org")
+    name = name.replace("BBB: The Sebastians", "BBB: Sebastians")
+    name = name.replace("BBB: Keyboards Up Close", "BBB: Keyboards")
+    name = name.replace("BBB: Cantatathon", "BBB: Cantatas")
+    name = name.replace("B'Fest: CONCORA, Baroklyn, Simone Dinnerstein", "B'Fest: CONCORA")
+    name = name.replace("B'Fest: Simone Dinnerstein Recital", "B'Fest: Simone")
+    name = name.replace("Catherine Russell & Sean Mason", "Russell/Mason")
+    name = name.replace("Jordi Savall & Hesperion XXI", "Savall/Hesperion")
+    name = name.replace("Alexandre Kantorow: Piano Recital", "Kantorow")
+    name = name.replace("Wom Chor & Cantilena", "Wom Chor & Cant")
+    name = name.replace("Chor: Frederick Douglass", "Chor: Frederick")
+    return name if len(name) <= cap else name[:cap - 1] + "…"
 
 
 def _draw_stacked_pair(ax, y, bar_h, row, xmax, fontsize=8):
@@ -89,14 +115,22 @@ def _draw_stacked_pair(ax, y, bar_h, row, xmax, fontsize=8):
     # Actual (lower bar) — only if completed
     if is_future:
         return
-    a_paid = row["Actual_Paid"] or 0
-    a_comp = row["Actual_Comp"] or 0
-    ax.barh(y - bar_h / 2, a_paid, height=bar_h,
-            color=ACT_PAID, edgecolor="white", linewidth=0.5, zorder=3)
-    ax.barh(y - bar_h / 2, a_comp, left=a_paid, height=bar_h,
-            color=ACT_COMP, edgecolor="white", linewidth=0.5, zorder=3)
-    if not ANON:
+    a_paid = row["Actual_Paid"]
+    a_comp = row["Actual_Comp"]
+    if pd.isna(a_paid) and pd.isna(a_comp):
+        # Total only — render solid bar in the actual-paid color.
+        total_a = row["Actual"] or 0
+        ax.barh(y - bar_h / 2, total_a, height=bar_h,
+                color=ACT_PAID, edgecolor="white", linewidth=0.5, zorder=3)
+    else:
+        a_paid = 0 if pd.isna(a_paid) else a_paid
+        a_comp = 0 if pd.isna(a_comp) else a_comp
+        ax.barh(y - bar_h / 2, a_paid, height=bar_h,
+                color=ACT_PAID, edgecolor="white", linewidth=0.5, zorder=3)
+        ax.barh(y - bar_h / 2, a_comp, left=a_paid, height=bar_h,
+                color=ACT_COMP, edgecolor="white", linewidth=0.5, zorder=3)
         total_a = a_paid + a_comp
+    if not ANON:
         ax.text(total_a + xmax * 0.006, y - bar_h / 2,
                 f"{int(round(total_a)):,}",
                 va="center", ha="left", fontsize=fontsize,
@@ -105,19 +139,15 @@ def _draw_stacked_pair(ax, y, bar_h, row, xmax, fontsize=8):
 
 def _summary_line(df):
     done = df[df["Status"] == "Completed"].copy()
-    done["abs_pct"]    = (done["Pred_Adj"] - done["Actual"]).abs() / done["Actual"]
-    done["signed_pct"] = (done["Pred_Adj"] - done["Actual"])       / done["Actual"]
-    mape = done["abs_pct"].mean() * 100
-    bias = done["signed_pct"].mean() * 100
+    wape = (done["Pred_Adj"] - done["Actual"]).abs().sum() / done["Actual"].sum() * 100
+    bias = ((done["Pred_Adj"] - done["Actual"]) / done["Actual"]).mean() * 100
     n_done = len(done)
     n_upc  = (df["Status"] == "Upcoming").sum()
-    if ANON:
-        return (f"Live-season backtest  ·  MAPE {mape:.0f}%  ·  "
-                f"Bias {bias:+.0f}%  ·  anonymized")
-    paid_share = done["Actual_Paid"].sum() / done["Actual"].sum() * 100
-    return (f"{n_done} completed  ·  MAPE {mape:.0f}%  ·  "
-            f"Bias {bias:+.0f}%  ·  paid share {paid_share:.0f}%  ·  "
-            f"{n_upc} upcoming (prediction only)")
+    suffix = "anonymized" if ANON else (
+        f"{n_upc} upcoming (prediction only)" if n_upc else "season complete"
+    )
+    return (f"WAPE {wape:.0f}%  ·  Bias {bias:+.0f}%  ·  "
+            f"{n_done} completed  ·  {suffix}")
 
 
 def _anon_label(idx, row):
@@ -261,12 +291,19 @@ def plot_bar_chart_event_axis(df):
                color=PRED_COMP, edgecolor="white", linewidth=0.5, zorder=3)
         if is_future:
             continue
-        a_paid = row["Actual_Paid"] or 0
-        a_comp = row["Actual_Comp"] or 0
-        ax.bar(xi + bar_w / 2, a_paid, width=bar_w,
-               color=ACT_PAID, edgecolor="white", linewidth=0.5, zorder=3)
-        ax.bar(xi + bar_w / 2, a_comp, width=bar_w, bottom=a_paid,
-               color=ACT_COMP, edgecolor="white", linewidth=0.5, zorder=3)
+        a_paid = row["Actual_Paid"]
+        a_comp = row["Actual_Comp"]
+        if pd.isna(a_paid) and pd.isna(a_comp):
+            total_a = row["Actual"] or 0
+            ax.bar(xi + bar_w / 2, total_a, width=bar_w,
+                   color=ACT_PAID, edgecolor="white", linewidth=0.5, zorder=3)
+        else:
+            a_paid = 0 if pd.isna(a_paid) else a_paid
+            a_comp = 0 if pd.isna(a_comp) else a_comp
+            ax.bar(xi + bar_w / 2, a_paid, width=bar_w,
+                   color=ACT_PAID, edgecolor="white", linewidth=0.5, zorder=3)
+            ax.bar(xi + bar_w / 2, a_comp, width=bar_w, bottom=a_paid,
+                   color=ACT_COMP, edgecolor="white", linewidth=0.5, zorder=3)
 
     if ANON:
         labels = [_anon_label(i, r) for i, r in enumerate(df.itertuples())]
@@ -274,7 +311,7 @@ def plot_bar_chart_event_axis(df):
         labels = [f"{shorten(r.EventName)}\n{r.EventDate:%b %d}"
                   for r in df.itertuples()]
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=55, ha="right", fontsize=8)
+    ax.set_xticklabels(labels, rotation=90, ha="center", va="top", fontsize=8)
     ax.set_xlim(-0.6, n - 0.4)
     ax.set_ylim(0, ymax)
     ax.set_ylabel("Tickets" + (" (scale removed)" if ANON else ""),
@@ -286,7 +323,7 @@ def plot_bar_chart_event_axis(df):
     ax.spines["left"].set_color(LGRAY)
     ax.spines["bottom"].set_color(LGRAY)
 
-    ax.legend(handles=_legend_handles(), loc="upper right",
+    ax.legend(handles=_legend_handles(), loc="upper left",
               fontsize=9, frameon=True, framealpha=0.95, edgecolor=LGRAY)
 
     title = ("Season Forecast: Predicted vs Actual Attendance (paid + comp)"

@@ -89,6 +89,19 @@ def _load_2526_events():
     return rel
 
 
+def _load_2526_completed():
+    """All completed 25-26 events from the live FullSeason file."""
+    fs = pd.read_excel('Forecast_2526_FullSeason.xlsx')
+    fs = fs[fs['Status'] == 'Completed'].copy()
+    fs['AbsPct']    = (fs['Pred_Adj'] - fs['Actual']).abs() / fs['Actual'] * 100
+    fs['SignedPct'] = (fs['Pred_Adj'] - fs['Actual'])       / fs['Actual'] * 100
+    fs = fs.rename(columns={
+        'Pred_Adj': 'PredictedAttendance',
+        'Actual':   'ActualAttendance',
+    })
+    return fs
+
+
 def load_2526_partial():
     rel = _load_2526_events()
     return {
@@ -255,6 +268,66 @@ def plot_class_mape(cm, ax):
                xlabel='MAPE (%)', pct_x=True)
 
 
+# ── Chart 4: single-panel 25-26 scatter ──────────────────────────────────
+def plot_scatter_2526(df_2526, ax):
+    lim = max(df_2526['ActualAttendance'].max(),
+              df_2526['PredictedAttendance'].max()) * 1.08
+    ax.plot([0, lim], [0, lim], color=DGRAY, linewidth=0.9,
+            linestyle='--', zorder=1)
+    for cls, sub in df_2526.groupby('EventClass'):
+        color = CLASS_COLORS.get(cls, DGRAY)
+        ax.scatter(sub['PredictedAttendance'], sub['ActualAttendance'],
+                   color=color, s=58, alpha=0.85,
+                   edgecolors='white', linewidths=0.5,
+                   label=cls, zorder=3)
+    ax.set_xlim(0, lim)
+    ax.set_ylim(0, lim)
+    ax.set_aspect('equal', adjustable='box')
+
+    wape = ((df_2526['PredictedAttendance'] - df_2526['ActualAttendance']).abs().sum()
+            / df_2526['ActualAttendance'].sum() * 100)
+    bias = df_2526['SignedPct'].mean()
+    ax.text(0.97, 0.05,
+            f'WAPE {wape:.0f}%\nBias {bias:+.0f}%\nn={len(df_2526)}',
+            transform=ax.transAxes, ha='right', va='bottom',
+            fontsize=9, color=DGRAY,
+            bbox=dict(boxstyle='round,pad=0.35', fc='white', ec=LGRAY, alpha=0.9))
+
+    ax.legend(fontsize=8.5, frameon=False, loc='upper left',
+              handletextpad=0.3, labelspacing=0.3, markerscale=0.85)
+    style_axis(ax, title='Predicted vs Actual — 2025–26 Season (completed events)',
+               xlabel='Predicted tickets', ylabel='Actual tickets')
+
+
+# ── Chart 5: 25-26-only class breakdown ──────────────────────────────────
+def plot_class_2526(df_2526, ax):
+    rows = []
+    for cls, g in df_2526.groupby('EventClass'):
+        wape = (g['PredictedAttendance'] - g['ActualAttendance']).abs().sum() \
+               / g['ActualAttendance'].sum() * 100
+        rows.append({
+            'Class': cls,
+            'WAPE':  wape,
+            'Bias':  g['SignedPct'].mean(),
+            'n':     len(g),
+        })
+    cm = pd.DataFrame(rows).sort_values('WAPE')
+    colors = [CLASS_COLORS.get(c, DGRAY) for c in cm['Class']]
+    y = np.arange(len(cm))
+    bars = ax.barh(y, cm['WAPE'], color=colors, height=0.55, zorder=3)
+    ax.set_yticks(y)
+    ax.set_yticklabels(cm['Class'], fontsize=10)
+    ax.set_xlim(0, cm['WAPE'].max() * 1.55)
+    for bar, wape, bias, n in zip(bars, cm['WAPE'], cm['Bias'], cm['n']):
+        ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height() / 2,
+                f'{wape:.0f}%  bias {bias:+.0f}%  (n={n})',
+                va='center', fontsize=9, color=NAVY)
+    ax.grid(axis='x', color=LGRAY, linewidth=0.7, zorder=0)
+    ax.grid(axis='y', visible=False)
+    style_axis(ax, title='Forecast Error by Event Type — 2025–26',
+               xlabel='WAPE (%)', pct_x=True)
+
+
 # ── Save individual PNGs ───────────────────────────────────────────────────
 def save_individual(df, sm, cm):
     # 3-panel scatter
@@ -282,6 +355,23 @@ def save_individual(df, sm, cm):
     fig.savefig('forecast_portfolio_class.png', dpi=180, bbox_inches='tight')
     plt.close(fig)
     print("  ✓ forecast_portfolio_class.png")
+
+    # 25-26 single-panel scatter
+    df_2526_full = _load_2526_completed()
+    fig, ax = plt.subplots(figsize=(5.6, 5.0))
+    plot_scatter_2526(df_2526_full, ax)
+    fig.tight_layout()
+    fig.savefig('forecast_portfolio_scatter_2526.png', dpi=180, bbox_inches='tight')
+    plt.close(fig)
+    print("  ✓ forecast_portfolio_scatter_2526.png")
+
+    # 25-26 class breakdown
+    fig, ax = plt.subplots(figsize=(6.5, 3))
+    plot_class_2526(df_2526_full, ax)
+    fig.tight_layout()
+    fig.savefig('forecast_portfolio_class_2526.png', dpi=180, bbox_inches='tight')
+    plt.close(fig)
+    print("  ✓ forecast_portfolio_class_2526.png")
 
 
 # ── Combined layout ────────────────────────────────────────────────────────

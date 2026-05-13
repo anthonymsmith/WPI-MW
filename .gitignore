@@ -11,6 +11,7 @@
 *.twb
 *.log
 *.png
+*.bak
 
 # Temp / OS
 ~$*

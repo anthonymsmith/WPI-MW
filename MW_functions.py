@@ -16,7 +16,9 @@ Date: September, 2024
 
 import pandas as pd
 import numpy as np
+import os
 import re
+import shutil
 import Model_functions as mod
 from datetime import datetime, timedelta
 from time import perf_counter
@@ -146,9 +148,70 @@ def add_PnL_data(event_df, Pnl_file, PnLProcessed_file, logger):
     logger.info(f'PnL data written to {PnLProcessed_file}. Execution Time: {_elapsed(start)}')
 
     return event_df
+def repair_salesforce_export(sales_file, logger):
+    """Repair extended-ASCII field-boundary corruption in the Salesforce CSV export.
+
+    The SF export occasionally collapses `<char>","` (closing quote + comma +
+    opening quote between two quoted fields) into a single non-ASCII byte
+    followed by `"`, eating the field separator. The CSV parser then shifts
+    all subsequent columns on the row and downstream filters drop the record.
+
+    Fix: at every position where a non-ASCII byte is followed by `"` and the
+    next byte is NOT a separator (`,`, `\\r`, `\\n`, or EOF), insert `,"` after
+    the `"`. The mangled character itself stays lost (a single byte is gone)
+    but the transaction row is preserved.
+
+    Idempotent — a clean file has no breaks and the call is a no-op. First
+    repair writes a `.bak` alongside the source; subsequent repairs on fresh
+    exports do not overwrite the existing backup.
+    """
+    if not os.path.exists(sales_file):
+        logger.warning(f'{sales_file} not found; skipping SF export repair')
+        return
+
+    with open(sales_file, 'rb') as f:
+        data = f.read()
+
+    seps = {ord(','), ord('\r'), ord('\n')}
+    quote = ord('"')
+    breaks = []
+    for i in range(len(data) - 2):
+        if data[i] < 0x80:
+            continue
+        if data[i + 1] != quote:
+            continue
+        if data[i + 2] in seps:
+            continue
+        breaks.append(i)
+
+    if not breaks:
+        logger.debug(f'No extended-ASCII field-boundary breaks in {sales_file}')
+        return
+
+    pieces = []
+    last = 0
+    for pos in breaks:
+        pieces.append(data[last:pos + 2])
+        pieces.append(b',"')
+        last = pos + 2
+    pieces.append(data[last:])
+    fixed = b''.join(pieces)
+
+    bak = sales_file + '.bak'
+    if not os.path.exists(bak):
+        shutil.copy2(sales_file, bak)
+        logger.info(f'Pre-repair backup written: {bak}')
+
+    with open(sales_file, 'wb') as f:
+        f.write(fixed)
+    logger.info(f'Repaired {len(breaks)} extended-ASCII field-boundary breaks in {sales_file}')
+
+
 def load_sales_file(sales_file, yearsOfData, logger):
     """Load Salesforce sales CSV, rename columns to readable names, and prune records older than yearsOfData years."""
     start = perf_counter()
+
+    repair_salesforce_export(sales_file, logger)
 
     # load sales file and fix column names
     sales_df = pd.read_csv(sales_file, encoding= 'latin1', low_memory=False)
