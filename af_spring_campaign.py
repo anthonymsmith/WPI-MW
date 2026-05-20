@@ -28,7 +28,8 @@ from openpyxl.utils import get_column_letter
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DATA_DIR   = '/Users/antho/Documents/WPI-MW'
-OUTPUT     = os.path.join(DATA_DIR, 'AF_Spring_Campaign.xlsx')
+DONOR_DIR  = os.path.join(DATA_DIR, 'donors')
+OUTPUT     = os.path.join(DONOR_DIR, 'AF_Spring_Campaign.xlsx')
 TODAY      = datetime.today()
 CURRENT_FY = 2025   # FY2025-2026 (Jul 2025 – Jun 2026)
 
@@ -41,7 +42,7 @@ def fy_label(fy):
 
 
 # ── 1. Load Annual Fund file ──────────────────────────────────────────────────
-af_files = sorted(glob.glob(os.path.join(DATA_DIR, 'FY donation review Annual Fund*.xlsx')))
+af_files = sorted(glob.glob(os.path.join(DONOR_DIR, 'FY donation review Annual Fund*.xlsx')))
 assert af_files, "No Annual Fund file found in DATA_DIR"
 af_file = af_files[-1]   # use most recent
 print(f"Loading: {os.path.basename(af_file)}")

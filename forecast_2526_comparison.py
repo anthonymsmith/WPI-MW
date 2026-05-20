@@ -706,12 +706,12 @@ def main():
     out['Error_Adj_Pct'] = ((out['Pred_Adj'] - out['Actual']) / out['Actual'] * 100).round(1)
     out['Error_B_Pct']   = ((out['Pred_B']   - out['Actual']) / out['Actual'] * 100).round(1)
 
-    with pd.ExcelWriter("Forecast_2526_Comparison.xlsx", engine="openpyxl") as writer:
+    with pd.ExcelWriter("forecasting/Forecast_2526_Comparison.xlsx", engine="openpyxl") as writer:
         out.to_excel(writer, sheet_name="2526_Comparison", index=False)
         name_model.sort_values('NameSeasons', ascending=False).to_excel(
             writer, sheet_name="Name_History", index=False)
 
-    print(f"\n✅ Written to Forecast_2526_Comparison.xlsx")
+    print(f"\n✅ Written to forecasting/Forecast_2526_Comparison.xlsx")
 
 
 if __name__ == "__main__":

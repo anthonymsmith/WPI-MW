@@ -300,7 +300,7 @@ def main():
     print(bias_breakdown(combined, 'EventVenue').to_string(index=False))
 
     # Write Excel output
-    output_file = "Forecast_Honest_Eval.xlsx"
+    output_file = "forecasting/Forecast_Honest_Eval.xlsx"
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         combined[['Season', 'EventId', 'EventName', 'EventClass', 'EventGenre', 'EventVenue',
                    'EventCapacity', 'PredictedAttendance', 'ActualAttendance',

@@ -3,7 +3,7 @@ Honest hindcast evaluation with the patched (5-level hierarchy + artist
 Bayesian adjustment) model. For each eval season, train on all OTHER seasons
 and predict the target season — no data leakage.
 
-Output: Forecast_Honest_Eval_Patched.xlsx
+Output: forecasting/Forecast_Honest_Eval_Patched.xlsx
   All_Seasons sheet carries both Pred_A (base) and Pred_Adj (patched) for
   each event, plus PredictedAttendance alias = Pred_Adj for viz compatibility.
 """
@@ -134,7 +134,7 @@ def main():
     ]
     out = out[[c for c in keep_cols if c in out.columns]]
 
-    out_path = "Forecast_Honest_Eval_Patched.xlsx"
+    out_path = "forecasting/Forecast_Honest_Eval_Patched.xlsx"
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         out.sort_values(["Season", "EventName"]).to_excel(
             writer, sheet_name="All_Seasons", index=False)

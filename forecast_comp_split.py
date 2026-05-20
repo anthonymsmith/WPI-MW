@@ -21,6 +21,7 @@ import numpy as np
 
 MIN_N     = 3
 MAX_RATE  = 0.75   # cap individual rates to 75% comp
+SHRINK_K  = 3      # Bayesian shrinkage: K pseudocounts (in events) toward _overall
 
 # Match the forecast's season weights so recent comp policy dominates.
 # (Imported lazily to avoid circular import.)
@@ -30,8 +31,8 @@ def _season_weights():
 
 
 def _rate_for(df, key_cols):
-    """Return {tuple(keys): (comp_qty_wtd, total_qty_wtd, rate)}.
-    n-threshold uses the unweighted row count so thin buckets still pool up.
+    """Return {tuple(keys): (comp_wtd, total_wtd, raw_rate, n_rows, n_events)}.
+    n_rows used for MIN_N threshold; n_events used for Bayesian shrinkage.
     """
     sub = df.dropna(subset=key_cols)
     if sub.empty:
@@ -40,6 +41,7 @@ def _rate_for(df, key_cols):
         comp=("CompWtd", "sum"),
         total=("TotalWtd", "sum"),
         n=("Quantity", "size"),
+        n_events=("EventName", "nunique"),
     )
     g = g[g["total"] > 0]
     g["rate"] = (g["comp"] / g["total"]).clip(0.0, MAX_RATE)
@@ -47,11 +49,11 @@ def _rate_for(df, key_cols):
     for idx, row in g.iterrows():
         key = idx if isinstance(idx, tuple) else (idx,)
         out[key] = (float(row["comp"]), float(row["total"]),
-                    float(row["rate"]), int(row["n"]))
+                    float(row["rate"]), int(row["n"]), int(row["n_events"]))
     return out
 
 
-def build_comp_rates(merged, training_seasons):
+def build_comp_rates(merged, training_seasons, shrink_k=SHRINK_K):
     """Return a nested dict of comp-rate lookups keyed by level."""
     df = merged[
         (merged["Season"].isin(training_seasons))
@@ -59,6 +61,7 @@ def build_comp_rates(merged, training_seasons):
         & (merged["EventStatus"] == "Complete")
         & (merged["TicketStatus"] == "Active")
         & (merged["Quantity"] > 0)
+        & (~merged["Pricing"].isin(["PWYW", "Free"]))
     ].copy()
 
     if "IsComp" in df.columns:
@@ -89,23 +92,43 @@ def build_comp_rates(merged, training_seasons):
         "total": float(total),
         "rate":  float(comp / total) if total else 0.0,
     }
-    rates["_levels"] = levels
-    rates["_min_n"]  = MIN_N
+    rates["_levels"]   = levels
+    rates["_min_n"]    = MIN_N
+    rates["_shrink_k"] = shrink_k
     return rates
 
 
-def _lookup_rate(row, rates):
-    """Waterfall lookup for a single event row."""
-    min_n = rates["_min_n"]
-    levels = rates["_levels"]
+def _shrunk(entry, overall, k):
+    """Bayesian-shrink a bucket rate toward overall using event-count pseudocounts.
 
-    # Entry tuple: (comp_wtd, total_wtd, rate, n_rows)
+        shrunk = (n_events * raw + k * overall) / (n_events + k)
+
+    n_events (distinct EventName per bucket) measures information content
+    better than transaction-row count, which is dominated by attendance volume.
+    Clipped to MAX_RATE to preserve the existing cap.
+    """
+    raw = entry[2]
+    n_events = entry[4]
+    if k <= 0 or n_events <= 0:
+        return raw
+    shrunk = (n_events * raw + k * overall) / (n_events + k)
+    return min(shrunk, MAX_RATE)
+
+
+def _lookup_rate(row, rates):
+    """Waterfall lookup for a single event row, with Bayesian shrinkage."""
+    min_n   = rates["_min_n"]
+    levels  = rates["_levels"]
+    overall = rates["_overall"]["rate"]
+    k       = rates["_shrink_k"]
+
+    # Entry tuple: (comp_wtd, total_wtd, raw_rate, n_rows, n_events)
     # EventRepeat first (captures event-specific comp policy like Messiah)
     er = row.get("EventRepeat")
     if pd.notna(er):
         entry = rates["EventRepeat"].get((er,))
         if entry and entry[3] >= min_n:
-            return entry[2], f"EventRepeat ({er})"
+            return _shrunk(entry, overall, k), f"EventRepeat ({er})"
 
     # Primary → F1 → F2 → F3 → F4
     for level in ["Primary", "F1", "F2", "F3", "F4"]:
@@ -115,9 +138,9 @@ def _lookup_rate(row, rates):
             continue
         entry = rates[level].get(key)
         if entry and entry[3] >= min_n:
-            return entry[2], level
+            return _shrunk(entry, overall, k), level
 
-    return rates["_overall"]["rate"], "_overall"
+    return overall, "_overall"
 
 
 def apply_comp_split(fc, comp_rates):

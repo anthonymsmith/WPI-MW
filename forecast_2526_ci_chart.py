@@ -5,8 +5,8 @@ Horizontal whisker plot: each event is a row showing the 90% prediction
 interval (Lo—Hi) with the point prediction marked, and the actual
 overlaid for completed events. Upcoming events show the band only.
 
-Input:  Forecast_2526_FullSeason.xlsx (sheet "FullSeason")
-Output: forecast_2526_ci_chart.png
+Input:  forecasting/Forecast_2526_FullSeason.xlsx (sheet "FullSeason")
+Output: forecasting/forecast_2526_ci_chart.png
 """
 import os
 import pandas as pd
@@ -28,8 +28,8 @@ DGRAY  = "#5A6A7A"
 GREEN  = "#2A9E6E"
 RED    = "#C94B4B"
 
-IN_XLSX  = "Forecast_2526_FullSeason.xlsx"
-OUT_PNG  = "forecast_2526_ci_chart.png"
+IN_XLSX  = "forecasting/Forecast_2526_FullSeason.xlsx"
+OUT_PNG  = "forecasting/forecast_2526_ci_chart.png"
 
 plt.rcParams.update({
     "font.family":       "sans-serif",
@@ -50,7 +50,7 @@ def shorten(name, n=42):
 
 
 def main():
-    df = pd.read_excel(IN_XLSX, sheet_name="FullSeason")
+    df = pd.read_excel(IN_XLSX, sheet_name="Detail")
     df["EventDate"] = pd.to_datetime(df["EventDate"])
     df = df.sort_values("EventDate").reset_index(drop=True)
 

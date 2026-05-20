@@ -6,7 +6,7 @@ Sources:
   - anon_DataMerge.csv + EventManifest.xlsx — attendance model training data
   - forecast_artist_adjustment.py     — Bayesian artist adjustment layer
 
-Output: Forecast_2526_vs_Budget.xlsx with two sheets:
+Output: forecasting/Forecast_2526_vs_Budget.xlsx with two sheets:
   EventDetail  — one row per event, revenue + attendance comparison
   Summary      — season totals and key metrics
 """
@@ -285,7 +285,7 @@ def write_excel(df):
         'Value': df['Pred_A'].notna().sum(),
     }])
 
-    out_file = 'Forecast_2526_vs_Budget.xlsx'
+    out_file = 'forecasting/Forecast_2526_vs_Budget.xlsx'
     with pd.ExcelWriter(out_file, engine='openpyxl') as writer:
         detail.to_excel(writer, sheet_name='EventDetail', index=False)
         summary.to_excel(writer, sheet_name='Summary', index=False)

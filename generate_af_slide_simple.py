@@ -9,7 +9,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
 
-OUTPUT = '/Users/antho/Documents/WPI-MW/AF_Spring_Campaign_Slide_Simple.pptx'
+OUTPUT = '/Users/antho/Documents/WPI-MW/donors/AF_Spring_Campaign_Slide_Simple.pptx'
 
 NAVY  = RGBColor(0x1A, 0x3A, 0x5C)
 TEAL  = RGBColor(0x2A, 0x9E, 0xA0)

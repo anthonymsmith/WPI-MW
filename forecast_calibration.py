@@ -430,7 +430,7 @@ def main():
         print(f"  {ec:<20} WAPE={wape_ec:.1f}%  Bias={bias_ec:+.1f}%  (n={len(g)})")
 
     # ── Write results ─────────────────────────────────────────────────────
-    output_file = "Forecast_Calibration_Results.xlsx"
+    output_file = "forecasting/Forecast_Calibration_Results.xlsx"
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         best_comp[['Season', 'EventId', 'EventName', 'EventClass', 'EventVenue', 'EventGenre',
                    'EventCapacity', 'RawPred', 'CalFactor', 'Pred', 'Actual']].sort_values(

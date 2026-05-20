@@ -24,7 +24,7 @@ LGRAY  = "#E8EDF2"
 
 
 def load():
-    df = pd.read_excel("Forecast_2526_FullSeason.xlsx")
+    df = pd.read_excel("forecasting/Forecast_2526_FullSeason.xlsx", sheet_name="Detail")
     df["EventDate"] = pd.to_datetime(df["EventDate"], errors="coerce")
     return df.sort_values("EventDate").reset_index(drop=True)
 
@@ -67,6 +67,8 @@ def build_html(df):
         f"<td class='num'>{bias:+.1f}%</td></tr>"
     )
 
+    # HTML img src is relative to the HTML file's own location (forecasting/),
+    # so no subfolder prefix here.
     chart_src = "forecast_2526_bar_chart_eventaxis_anon.png"
     chart_src_wide = "forecast_2526_bar_chart_wide_anon.png"
 
@@ -149,7 +151,7 @@ A working attendance forecast for a regional performing-arts season  ·  {today}
 <p class="lede">
 A regional presenter signs next season's contracts 12–18 months out:
 venues, artists, fees, marketing budget. Each event is a bet on a single
-number — how many people will show up. Miss high and you're staring at
+number: how many people will show up. Miss high and you're staring at
 empty seats and a marketing post-mortem; miss low and you've
 under-resourced the show that needed the most help. Most arts
 organizations make those bets on instinct. This brief is about a
@@ -159,7 +161,7 @@ forecasting model that doesn't.
 <p class="lede">
 Built and running in production at a regional presenter, the model
 produces per-event attendance estimates at the start of the planning
-cycle — before a single ticket goes on sale. Through
+cycle, before a single ticket goes on sale. Through
 <strong>{n_done} of {n_done + n_upc}</strong> completed events of the
 2025–26 season, those pre-season predictions are tracking within
 <strong>{wape:.0f}%</strong> of actual attendance, with effectively no
@@ -172,16 +174,16 @@ directional drift (bias <strong>{bias:+.0f}%</strong>).
 </div>
 <div class="caption">
 Predicted (navy) vs. actual (orange) attendance per event. Lighter tones
-are comps. Anonymized — identifiers and scale removed.
+are comps. Anonymized; identifiers and scale removed.
 </div>
 
 <p>
 The bars line up. That's the headline. Some events came in slightly
 under, some slightly over, none catastrophically. The largest misses
-sit on the model's known weak edges — programs without clean comparable
+sit on the model's known weak edges: programs without clean comparable
 history, or recitals where the artist-signal layer hasn't yet seen
 enough sample to anchor. The closest calls were headliners with strong
-bucket precedent and a recurring-series tag — a vote for the model's
+bucket precedent and a recurring-series tag, a vote for the model's
 strength on its core repertoire.
 </p>
 
@@ -189,13 +191,13 @@ strength on its core repertoire.
 <p>
 Going into a season with a defensible per-event attendance number
 changes three conversations. <strong>Budgeting</strong> stops being
-aggregate hand-waving — each event has a forecast and the season's
+aggregate hand-waving. Each event has a forecast and the season's
 revenue picture is the sum of those, auditable line by line.
 <strong>Season planning</strong> gets a common scale: a proposed
 booking arrives with a draw estimate in the same units as everything
 else on the calendar, so "do we have enough capacity at this draw
 tier?" becomes a question with a number, not a vibe. And
-<strong>marketing</strong> prioritizes earlier — events forecast under
+<strong>marketing</strong> prioritizes earlier; events forecast under
 capacity surface as candidates for paid promotion or partnership
 outreach months before sale data would confirm the gap.
 </p>
@@ -209,11 +211,11 @@ Why the standard tools don't work, and what does.
 
 <p>
 The forecasting problem in performing arts isn't usually too much
-data — it's too little of the right kind. A typical season is 25–35
+data. It's too little of the right kind. A typical season is 25–35
 events spanning headliner orchestras, chamber recitals, jazz combos,
 choral programs, education events, and free pay-what-you-want concerts.
-A cell defined by the natural cuts — class × venue × subgenre × line of
-business — might contain a single prior observation, or none at all.
+A cell defined by the natural cuts (class × venue × subgenre × line of
+business) might contain a single prior observation, or none at all.
 Rule-of-thumb averages ("a recital in this hall draws roughly 500")
 collapse the signal that matters most: artist stature, repeat-series
 momentum, pricing format, venue tier.
@@ -225,7 +227,7 @@ hierarchy</strong>. Each event finds its prediction at the closest
 comparable cell available, falling back to progressively broader pools
 until it lands on a stable mean. <strong>Empirical-Bayes
 shrinkage</strong> at each level pulls thin buckets toward their
-next-coarser fallback — niche low buckets are protected, but thin
+next-coarser fallback. Niche low buckets are protected, but thin
 buckets sitting unrealistically high get pulled back. A
 <strong>recurring-series prior</strong> fires before the hierarchy
 whenever a series has ≥2 prior observations, capturing the momentum of
@@ -240,7 +242,7 @@ subgenre × venue cells are empty. Finally, an
 <strong>artist-popularity layer</strong> absorbs Wikipedia, Last.fm,
 and Deezer signals through an informed-Bayesian regression on log(actual
 / bucket prior). A signal-strength gate fires the adjustment only when
-genre-fit and signal thresholds are met — preventing global-pop signals
+genre-fit and signal thresholds are met, preventing global-pop signals
 from distorting world, folk, and Americana events where they don't
 apply.
 </p>
@@ -249,7 +251,7 @@ apply.
 Evaluation is <strong>temporal-holdout</strong>: each test season is
 predicted using only data strictly prior to it, with pandemic-era events
 down-weighted. There's no way for future information to leak into a
-past forecast — which is what makes the multi-season numbers below
+past forecast, which is what makes the multi-season numbers below
 defensible.
 </p>
 
@@ -266,10 +268,10 @@ shrinkage layers since then have largely closed that gap.
 </p>
 
 <div class="callout">
-<strong>WAPE</strong> (Weighted Absolute Percentage Error) — total miss
+<strong>WAPE</strong> (Weighted Absolute Percentage Error): total miss
 divided by total actual attendance. Volume-weighted so misses on
 high-draw events count more than misses on low-draw events.
-<strong>Bias</strong> — average signed error; near zero indicates no
+<strong>Bias</strong>: average signed error; near zero indicates no
 systematic over- or under-prediction.
 </div>
 
@@ -277,7 +279,7 @@ systematic over- or under-prediction.
 <ul>
 <li><strong>In-season blending.</strong> Combine the pre-season
 forecast with running sale counts via Kaplan–Meier survival curves of
-ticket-purchase timing by event class — a forecast that sharpens as the
+ticket-purchase timing by event class, a forecast that sharpens as the
 show approaches.</li>
 <li><strong>Sales-pace and pricing.</strong> Use the same temporal
 curves to test where late-sale discounting erodes revenue versus fills
@@ -302,7 +304,7 @@ For collaboration, comparison studies, or replication discussions:
 Calibration, error by event class, and accuracy trend over the past three seasons.
 </div>
 
-<h2 style="margin-top:5pt;">Calibration — predicted vs. actual, 2025–26</h2>
+<h2 style="margin-top:5pt;">Calibration: predicted vs. actual, 2025–26</h2>
 <div class="chart-wrap" style="margin:0;">
 <img src="forecast_portfolio_scatter_2526.png" alt="Predicted vs actual scatter for 2025-26 completed events" style="max-height:2.9in;">
 </div>
@@ -312,18 +314,18 @@ perfect prediction; above the line means the event drew more than forecast,
 below means less. Color reflects event class.
 </div>
 
-<h2 style="margin-top:6pt;">Where the model fits best — by event class, 2025–26</h2>
+<h2 style="margin-top:6pt;">Where the model fits best, by event class, 2025–26</h2>
 <div class="chart-wrap" style="margin:0;">
 <img src="forecast_portfolio_class_2526.png" alt="WAPE by event class, 2025-26" style="max-height:1.55in;">
 </div>
 <div class="caption" style="margin:0 0 2pt 0;">
 Headliners and the new Prestige tier (specialist artists with strong
 core-audience appeal) are predicting tightly. Standard programming carries
-the largest share of variance — its breadth across genre, venue, and
+the largest share of variance; its breadth across genre, venue, and
 repeat-status is also the broadest of any class.
 </div>
 
-<h2 style="margin-top:6pt;">Accuracy trend — past three seasons + live</h2>
+<h2 style="margin-top:6pt;">Accuracy trend across past three seasons and live</h2>
 <div class="chart-wrap" style="margin:0;">
 <img src="forecast_portfolio_accuracy.png" alt="Forecast accuracy by season trend" style="max-height:2.2in;">
 </div>
@@ -331,14 +333,14 @@ repeat-status is also the broadest of any class.
 Per-event MAPE (bars) and average bias (line). Error has compressed over
 three seasons as the season-weighting scheme, shrinkage layers, and
 artist-popularity layer have accumulated. The live 2025–26 bar reflects
-pre-Dec 2025 events; the full season is at WAPE 19% / bias +3% (see Page 1).
+pre-Dec 2025 events; the full season is at WAPE 17% / bias +4% (see Page 1).
 </div>
 
 </body>
 </html>
 """
 
-    out = "forecast_brief.html"
+    out = "forecasting/forecast_brief.html"
     with open(out, "w") as f:
         f.write(html)
     print(f"  ✓ {out}")

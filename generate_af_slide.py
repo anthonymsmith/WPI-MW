@@ -8,7 +8,7 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 
-OUTPUT = '/Users/antho/Documents/WPI-MW/AF_Spring_Campaign_Slide.pptx'
+OUTPUT = '/Users/antho/Documents/WPI-MW/donors/AF_Spring_Campaign_Slide.pptx'
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 NAVY   = RGBColor(0x1A, 0x3A, 0x5C)

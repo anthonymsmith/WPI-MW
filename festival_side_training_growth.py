@@ -123,7 +123,7 @@ def main():
         ha="center", fontsize=9, color=INK_LT, style="italic",
     )
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-    out = "festival_side_training_growth.png"
+    out = "forecasting/festival_side_training_growth.png"
     plt.savefig(out, dpi=160, bbox_inches="tight", facecolor="white")
     print(f"✓ {out}")
     print(f"  25-26 forecast: all Side n={s2526[0]} mean={s2526[1]:.0f}; "

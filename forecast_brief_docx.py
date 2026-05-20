@@ -34,7 +34,7 @@ HOLDOUT_TOTAL = (64, 26.3, 9.8)
 
 
 def live_stats():
-    df = pd.read_excel("Forecast_2526_FullSeason.xlsx")
+    df = pd.read_excel("forecasting/Forecast_2526_FullSeason.xlsx", sheet_name="Detail")
     done = df[df["Status"] == "Completed"].copy()
     wape = (done["Pred_Adj"] - done["Actual"]).abs().sum() / done["Actual"].sum() * 100
     bias = ((done["Pred_Adj"] - done["Actual"]) / done["Actual"]).mean() * 100
@@ -252,7 +252,7 @@ def build_docx():
     ])
 
     _h2(doc, "The 2025\u201326 scorecard")
-    _image(doc, "forecast_2526_bar_chart_eventaxis_anon.png", width_in=7.0)
+    _image(doc, "forecasting/forecast_2526_bar_chart_eventaxis_anon.png", width_in=7.0)
     _caption(doc, "Predicted (navy) vs. actual (orange) attendance per event. Lighter "
                   "tones are comps. Anonymized \u2014 identifiers and scale removed.")
 
@@ -394,27 +394,27 @@ def build_docx():
     _subtitle(doc, "Calibration, error by event class, and accuracy trend over the past three seasons.")
 
     _h2(doc, "Calibration \u2014 predicted vs. actual, 2025\u201326")
-    _image(doc, "forecast_portfolio_scatter_2526.png", width_in=4.6)
+    _image(doc, "forecasting/forecast_portfolio_scatter_2526.png", width_in=4.6)
     _caption(doc, "Each point is a completed event. Points on the dashed diagonal "
                   "indicate perfect prediction; above the line means the event drew "
                   "more than forecast, below means less. Color reflects event class.")
 
     _h2(doc, "Where the model fits best \u2014 by event class, 2025\u201326")
-    _image(doc, "forecast_portfolio_class_2526.png", width_in=6.5)
+    _image(doc, "forecasting/forecast_portfolio_class_2526.png", width_in=6.5)
     _caption(doc, "Headliners and the new Prestige tier (specialist artists with "
                   "strong core-audience appeal) are predicting tightly. Standard "
                   "programming carries the largest share of variance \u2014 its breadth "
                   "across genre, venue, and repeat-status is also the broadest of any class.")
 
     _h2(doc, "Accuracy trend \u2014 past three seasons + live")
-    _image(doc, "forecast_portfolio_accuracy.png", width_in=6.0)
+    _image(doc, "forecasting/forecast_portfolio_accuracy.png", width_in=6.0)
     _caption(doc, "Per-event MAPE (bars) and average bias (line). Error has compressed "
                   "over three seasons as the season-weighting scheme, shrinkage layers, "
                   "and artist-popularity layer have accumulated. The live 2025\u201326 bar "
-                  "reflects pre-Dec 2025 events; the full season is at WAPE 19% / "
-                  "bias +3% (see Page 1).")
+                  "reflects pre-Dec 2025 events; the full season is at WAPE 17% / "
+                  "bias +4% (see Page 1).")
 
-    out = "forecast_brief.docx"
+    out = "forecasting/forecast_brief.docx"
     doc.save(out)
     print(f"  \u2713 {out}")
     return out

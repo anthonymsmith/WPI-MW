@@ -3,10 +3,10 @@ Portfolio visualizations: Forecast vs Actuals — anonymized.
 No event names, venue names, or organization identifiers.
 
 Output files:
-  forecast_portfolio_scatter.png    (3-panel scatter by season)
-  forecast_portfolio_accuracy.png   (MAPE + bias by season, incl. 25-26 partial)
-  forecast_portfolio_class.png      (MAPE + bias by event type, last 3 seasons)
-  forecast_portfolio_combined.png   (combined layout)
+  forecasting/forecast_portfolio_scatter.png    (3-panel scatter by season)
+  forecasting/forecast_portfolio_accuracy.png   (MAPE + bias by season, incl. 25-26 partial)
+  forecasting/forecast_portfolio_class.png      (MAPE + bias by event type, last 3 seasons)
+  forecasting/forecast_portfolio_combined.png   (combined layout)
 """
 
 import os
@@ -55,7 +55,7 @@ plt.rcParams.update({
 
 # ── Data loading ───────────────────────────────────────────────────────────
 def load():
-    df = pd.read_excel('Forecast_Honest_Eval_Patched.xlsx', sheet_name='All_Seasons')
+    df = pd.read_excel('forecasting/Forecast_Honest_Eval_Patched.xlsx', sheet_name='All_Seasons')
     df = df[df['ActualAttendance'] > 0].copy()
     df['AbsPct']    = df['PercentError'] * 100
     df['SignedPct'] = df['SignedPctError'] * 100
@@ -68,7 +68,7 @@ def _load_2526_events():
     Matches the 2024-12-11 SF export cutoff; post-Dec-11 rows show only
     advance ticket sales as 'actuals' and are excluded.
     Returns DataFrame with columns aligned to honest-eval schema."""
-    comp = pd.read_excel('Forecast_2526_Comparison.xlsx', sheet_name='2526_Comparison')
+    comp = pd.read_excel('forecasting/Forecast_2526_Comparison.xlsx', sheet_name='2526_Comparison')
     em   = pd.read_excel('EventManifest.xlsx', sheet_name='EventManifest')
 
     dates = em.drop_duplicates('EventName')[['EventName', 'EventDate']].copy()
@@ -91,7 +91,7 @@ def _load_2526_events():
 
 def _load_2526_completed():
     """All completed 25-26 events from the live FullSeason file."""
-    fs = pd.read_excel('Forecast_2526_FullSeason.xlsx')
+    fs = pd.read_excel('forecasting/Forecast_2526_FullSeason.xlsx', sheet_name='Detail')
     fs = fs[fs['Status'] == 'Completed'].copy()
     fs['AbsPct']    = (fs['Pred_Adj'] - fs['Actual']).abs() / fs['Actual'] * 100
     fs['SignedPct'] = (fs['Pred_Adj'] - fs['Actual'])       / fs['Actual'] * 100
@@ -336,42 +336,42 @@ def save_individual(df, sm, cm):
     fig.suptitle('Predicted vs Actual Attendance by Season',
                  fontsize=12, fontweight='bold', color=NAVY, y=1.02)
     fig.tight_layout()
-    fig.savefig('forecast_portfolio_scatter.png', dpi=180, bbox_inches='tight')
+    fig.savefig('forecasting/forecast_portfolio_scatter.png', dpi=180, bbox_inches='tight')
     plt.close(fig)
-    print("  ✓ forecast_portfolio_scatter.png")
+    print("  ✓ forecasting/forecast_portfolio_scatter.png")
 
     # Season accuracy
     fig, ax = plt.subplots(figsize=(6.5, 4))
     plot_season_accuracy(sm, ax)
     fig.tight_layout()
-    fig.savefig('forecast_portfolio_accuracy.png', dpi=180, bbox_inches='tight')
+    fig.savefig('forecasting/forecast_portfolio_accuracy.png', dpi=180, bbox_inches='tight')
     plt.close(fig)
-    print("  ✓ forecast_portfolio_accuracy.png")
+    print("  ✓ forecasting/forecast_portfolio_accuracy.png")
 
     # Class MAPE
     fig, ax = plt.subplots(figsize=(6.5, 3))
     plot_class_mape(cm, ax)
     fig.tight_layout()
-    fig.savefig('forecast_portfolio_class.png', dpi=180, bbox_inches='tight')
+    fig.savefig('forecasting/forecast_portfolio_class.png', dpi=180, bbox_inches='tight')
     plt.close(fig)
-    print("  ✓ forecast_portfolio_class.png")
+    print("  ✓ forecasting/forecast_portfolio_class.png")
 
     # 25-26 single-panel scatter
     df_2526_full = _load_2526_completed()
     fig, ax = plt.subplots(figsize=(5.6, 5.0))
     plot_scatter_2526(df_2526_full, ax)
     fig.tight_layout()
-    fig.savefig('forecast_portfolio_scatter_2526.png', dpi=180, bbox_inches='tight')
+    fig.savefig('forecasting/forecast_portfolio_scatter_2526.png', dpi=180, bbox_inches='tight')
     plt.close(fig)
-    print("  ✓ forecast_portfolio_scatter_2526.png")
+    print("  ✓ forecasting/forecast_portfolio_scatter_2526.png")
 
     # 25-26 class breakdown
     fig, ax = plt.subplots(figsize=(6.5, 3))
     plot_class_2526(df_2526_full, ax)
     fig.tight_layout()
-    fig.savefig('forecast_portfolio_class_2526.png', dpi=180, bbox_inches='tight')
+    fig.savefig('forecasting/forecast_portfolio_class_2526.png', dpi=180, bbox_inches='tight')
     plt.close(fig)
-    print("  ✓ forecast_portfolio_class_2526.png")
+    print("  ✓ forecasting/forecast_portfolio_class_2526.png")
 
 
 # ── Combined layout ────────────────────────────────────────────────────────
@@ -397,9 +397,9 @@ def save_combined(df, sm, cm):
              'Temporal holdout evaluation  ·  3 seasons  ·  80 events  ·  Anonymized',
              ha='center', fontsize=8.5, color=DGRAY)
 
-    fig.savefig('forecast_portfolio_combined.png', dpi=180, bbox_inches='tight')
+    fig.savefig('forecasting/forecast_portfolio_combined.png', dpi=180, bbox_inches='tight')
     plt.close(fig)
-    print("  ✓ forecast_portfolio_combined.png")
+    print("  ✓ forecasting/forecast_portfolio_combined.png")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────

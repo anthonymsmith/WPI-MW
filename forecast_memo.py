@@ -4,8 +4,8 @@ Forecast Performance Memo — 25-26 Season
 Generates a 1-2 page HTML memo summarizing the forecast model's live-season
 performance. Two variants:
 
-  python forecast_memo.py          → forecast_memo.html       (named, for MW/financials)
-  python forecast_memo.py --anon   → forecast_memo_anon.html  (for prospects/academic/other clients)
+  python forecast_memo.py          → forecasting/forecast_memo.html       (named, for MW/financials)
+  python forecast_memo.py --anon   → forecasting/forecast_memo_anon.html  (for prospects/academic/other clients)
 
 Pairs a written narrative with forecast_2526_bar_chart_wide(.|_anon.).png.
 Render to PDF via Chrome headless if needed.
@@ -28,7 +28,7 @@ LGRAY  = "#E8EDF2"
 
 
 def load():
-    df = pd.read_excel("Forecast_2526_FullSeason.xlsx")
+    df = pd.read_excel("forecasting/Forecast_2526_FullSeason.xlsx", sheet_name="Detail")
     df["EventDate"] = pd.to_datetime(df["EventDate"], errors="coerce")
     df = df.sort_values("EventDate").reset_index(drop=True)
     return df
@@ -71,21 +71,21 @@ MISS_REASONS = {
     "Bach's Birthday Bash 2026: Keyboards Up Close":
         "Festival sub-event in an intimate room; model leaned on broader BBB priors and overshot the niche keyboard recital.",
     "Nelson Goerner":
-        "Recitalist with limited US profile — Wikipedia/Last.fm signals understated draw; legacy classical-piano audience showed up.",
+        "Recitalist with limited US profile. Wikipedia/Last.fm signals understated draw; legacy classical-piano audience showed up.",
     "Bach's Birthday Bash 2026: Cantatathon":
         "Cantatathon is a long-form devotional event; model's BBB priors include broader-appeal sub-events and overshot.",
     "Catherine Russell & Sean Mason":
-        "Jazz vocal pairing — genre-fit gate dampened popularity signal; actual draw exceeded the venue-tier baseline.",
+        "Jazz vocal pairing; genre-fit gate dampened popularity signal. Actual draw exceeded the venue-tier baseline.",
     "Aaron Diehl Trio":
-        "Jazz trio at a small-room slot — model's headliner-jazz prior pulled prediction up; actual draw closer to chamber norms.",
+        "Jazz trio at a small-room slot. Model's headliner-jazz prior pulled prediction up; actual draw closer to chamber norms.",
 }
 
 ANON_MISS_REASONS = [
     "Festival sub-event in an intimate room; model leaned on broader festival priors and overshot a niche pairing.",
-    "Recitalist with limited online profile — popularity signals understated draw; loyal audience exceeded baseline.",
+    "Recitalist with limited online profile. Popularity signals understated draw; loyal audience exceeded baseline.",
     "Devotional long-form festival sub-event; model's festival priors include broader-appeal sub-events and overshot.",
     "Genre-fit gate dampened popularity signal for a vocal pairing; actual draw exceeded venue-tier baseline.",
-    "Small-room jazz slot — headliner-jazz prior pulled prediction up; actual draw closer to chamber norms.",
+    "Small-room jazz slot. Headliner-jazz prior pulled prediction up; actual draw closer to chamber norms.",
 ]
 
 
@@ -99,17 +99,19 @@ def render_html(df, anon):
     subtitle = (f"WAPE {wape:.0f}%  ·  Bias {bias:+.0f}%  ·  "
                 f"{n_done} of {n_done + n_upc} events completed  ·  "
                 f"as of {date.today():%b %-d, %Y}")
+    # HTML img src is relative to the HTML's own location (forecasting/),
+    # so no subfolder prefix here.
     chart_src = ("forecast_2526_bar_chart_wide_anon.png" if anon
                  else "forecast_2526_bar_chart_wide.png")
 
     upcoming_df = df[df["Status"] == "Upcoming"].sort_values("EventDate")
     if anon:
         upcoming_lines = [f"<li>{anon_label(len(df) - len(upcoming_df) + i + 1)}"
-                          f" — predicted {int(round(r.Pred_Adj))} tickets</li>"
+                          f": predicted {int(round(r.Pred_Adj))} tickets</li>"
                           for i, r in enumerate(upcoming_df.itertuples())]
     else:
         upcoming_lines = [f"<li><strong>{r.EventName}</strong> "
-                          f"({r.EventDate:%b %-d}) — predicted "
+                          f"({r.EventDate:%b %-d}): predicted "
                           f"{int(round(r.Pred_Adj))} tickets</li>"
                           for r in upcoming_df.itertuples()]
     upcoming_html = "\n".join(upcoming_lines)
@@ -238,22 +240,22 @@ remain.
 
 <h2>How the model works</h2>
 <p>
-Each event's prediction is built from a hierarchy of comparable events —
+Each event's prediction is built from a hierarchy of comparable events:
 same class and venue first (e.g. headliner recital at Mechanics Hall),
 then progressively broader pools when the closest comparison is thin.
 Recurring series carry their own prior. An artist-popularity layer adjusts
 classical-genre events using Wikipedia, Last.fm, and Deezer signals, gated
 so noisy or out-of-genre signals don't fire. Pricing format (PWYW) and
 venue tier feed in as multiplicative and pooled adjustments respectively.
-The model is evaluated on temporal holdouts — trained only on seasons
-prior to the target — so live-season numbers reflect honest forward
+The model is evaluated on temporal holdouts (trained only on seasons
+prior to the target), so live-season numbers reflect honest forward
 performance, not a fitted backtest.
 </p>
 
 <div class="metric-defs">
 <strong>WAPE (Weighted Absolute Percentage Error):</strong> total miss across
-the season divided by total actual attendance. Volume-weighted — misses on
-big events count more than misses on small ones. Lower is better.<br>
+the season divided by total actual attendance. Volume-weighted, so misses
+on big events count more than misses on small ones. Lower is better.<br>
 <strong>Bias:</strong> the average signed error. Near zero means the model
 isn't systematically over- or under-shooting; positive means it tends to
 over-predict.
@@ -278,7 +280,7 @@ over-predict.
 </table>
 <p style="font-size:9pt; color:{INK_LT};">
 Strong fits across the season: a returning headliner, a regular series,
-festival anchors, and an annual choir program — all anchored by deep
+festival anchors, and an annual choir program. All anchored by deep
 historical pools.
 </p>
 </div>
@@ -306,7 +308,7 @@ Forecast will be refreshed at season close to fold in final actuals.
 <li><strong>Budgeting:</strong> a per-event attendance + revenue forecast at
 the start of the planning cycle, replacing rule-of-thumb averages.</li>
 <li><strong>Season planning:</strong> proposed bookings get a draw estimate
-in the same numeric language as historical events — easier to compare
+in the same numeric language as historical events, easier to compare
 risk and balance the calendar.</li>
 <li><strong>Marketing prioritization:</strong> events flagged as
 under-forecast against capacity surface natural targets for paid promotion
@@ -314,14 +316,14 @@ or audience-segment outreach.</li>
 </ul>
 
 <div class="footer">
-{"Anonymized for external sharing — event identifiers and ticket scales removed." if anon else "Internal — for Music Worcester finance and planning use."}
+{"Anonymized for external sharing; event identifiers and ticket scales removed." if anon else "Internal use for Music Worcester finance and planning."}
 </div>
 
 </body>
 </html>
 """
 
-    out = "forecast_memo_anon.html" if anon else "forecast_memo.html"
+    out = "forecasting/forecast_memo_anon.html" if anon else "forecasting/forecast_memo.html"
     with open(out, "w") as f:
         f.write(html)
     print(f"  ✓ {out}")

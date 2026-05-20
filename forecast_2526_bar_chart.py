@@ -5,10 +5,10 @@ Each event is a row with two bars (Predicted, Actual) ordered chronologically.
 Bars are stacked: paid tickets on the left, comps on the right. Upcoming
 events show only the predicted bar.
 
-Pulls data from Forecast_2526_FullSeason.xlsx (produced by
+Pulls data from forecasting/Forecast_2526_FullSeason.xlsx (produced by
 forecast_2526_full_season.py).
 
-Output: forecast_2526_bar_chart.png, forecast_2526_bar_chart_wide.png
+Output: forecasting/forecast_2526_bar_chart.png, forecasting/forecast_2526_bar_chart_wide.png
 
 Run with `python forecast_2526_bar_chart.py --anon` to also produce
 *_anon.png variants with event names + per-bar totals + x-axis tick numbers
@@ -23,7 +23,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
-ANON = "--anon" in sys.argv
+ANON  = "--anon" in sys.argv
+SCALE = "--scale" in sys.argv   # keep tick scale even in anon (for visuals)
 
 WORKING_DIR = "/Users/antho/Documents/WPI-MW"
 os.chdir(WORKING_DIR)
@@ -54,7 +55,7 @@ plt.rcParams.update({
 
 
 def load_forecast():
-    df = pd.read_excel("Forecast_2526_FullSeason.xlsx")
+    df = pd.read_excel("forecasting/Forecast_2526_FullSeason.xlsx", sheet_name="Detail")
     df["EventDate"] = pd.to_datetime(df["EventDate"], errors="coerce")
     df = df.sort_values("EventDate").reset_index(drop=True)
     for c in ["Actual", "Actual_Paid", "Actual_Comp",
@@ -156,10 +157,10 @@ def _anon_label(idx, row):
 
 def _legend_handles():
     return [
-        Patch(facecolor=PRED_PAID, label="Predicted — paid"),
-        Patch(facecolor=PRED_COMP, label="Predicted — comp"),
-        Patch(facecolor=ACT_PAID,  label="Actual — paid"),
-        Patch(facecolor=ACT_COMP,  label="Actual — comp"),
+        Patch(facecolor=PRED_PAID, label="Predicted: paid"),
+        Patch(facecolor=PRED_COMP, label="Predicted: comp"),
+        Patch(facecolor=ACT_PAID,  label="Actual: paid"),
+        Patch(facecolor=ACT_COMP,  label="Actual: comp"),
     ]
 
 
@@ -206,8 +207,8 @@ def plot_bar_chart(df):
              ha="left", va="top", fontsize=10, color=DGRAY)
 
     fig.tight_layout(rect=[0, 0, 1, 0.955])
-    out = ("forecast_2526_bar_chart_anon.png" if ANON
-           else "forecast_2526_bar_chart.png")
+    out = ("forecasting/forecast_2526_bar_chart_anon.png" if ANON
+           else "forecasting/forecast_2526_bar_chart.png")
     fig.savefig(out, dpi=180, bbox_inches="tight")
     plt.close(fig)
     print(f"  ✓ {out}")
@@ -231,7 +232,7 @@ def plot_bar_chart_wide(df):
         y = np.arange(m)[::-1]
         bar_h = 0.38
         for yi, (_, row) in zip(y, grp.iterrows()):
-            _draw_stacked_pair(ax, yi, bar_h, row, xmax, fontsize=7.2)
+            _draw_stacked_pair(ax, yi, bar_h, row, xmax, fontsize=8.5)
 
         if ANON:
             labels = [_anon_label(i + (0 if grp is groups[0] else len(groups[0])),
@@ -239,30 +240,32 @@ def plot_bar_chart_wide(df):
         else:
             labels = [f"{shorten(r.EventName)}   {r.EventDate:%b %d}"
                       for r in grp.itertuples()]
-        ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=8)
+        ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=9.5)
         ax.set_xlim(0, xmax)
         ax.grid(axis="x", color=LGRAY, linewidth=0.7, zorder=0)
         ax.set_axisbelow(True)
         ax.spines["left"].set_color(LGRAY)
         ax.spines["bottom"].set_color(LGRAY)
-        ax.tick_params(axis="x", labelsize=8)
+        ax.tick_params(axis="x", labelsize=9.5)
         if ANON:
             ax.set_xticklabels([])
 
     title = ("Season Forecast: Predicted vs Actual Attendance (paid + comp)"
              if ANON else
              "25–26 Season: Predicted vs Actual Attendance (paid + comp)")
-    fig.suptitle(title, fontsize=14, fontweight="bold", color=NAVY,
+    fig.suptitle(title, fontsize=15, fontweight="bold", color=NAVY,
                  x=0.02, ha="left", y=0.995)
     fig.text(0.02, 0.955, _summary_line(df),
-             ha="left", va="top", fontsize=10, color=DGRAY)
+             ha="left", va="top", fontsize=10.5, color=DGRAY)
 
-    fig.legend(handles=_legend_handles(), loc="lower center", ncol=4,
-               fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.015))
+    # Legend in upper right of the second axes (top-right of the chart area)
+    axes[1].legend(handles=_legend_handles(), loc="upper right",
+                   fontsize=9.5, frameon=True, framealpha=0.95,
+                   edgecolor=LGRAY, ncol=1)
 
-    fig.tight_layout(rect=[0, 0.02, 1, 0.93])
-    out = ("forecast_2526_bar_chart_wide_anon.png" if ANON
-           else "forecast_2526_bar_chart_wide.png")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    out = ("forecasting/forecast_2526_bar_chart_wide_anon.png" if ANON
+           else "forecasting/forecast_2526_bar_chart_wide.png")
     fig.savefig(out, dpi=180, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"  ✓ {out}")
@@ -314,9 +317,10 @@ def plot_bar_chart_event_axis(df):
     ax.set_xticklabels(labels, rotation=90, ha="center", va="top", fontsize=8)
     ax.set_xlim(-0.6, n - 0.4)
     ax.set_ylim(0, ymax)
-    ax.set_ylabel("Tickets" + (" (scale removed)" if ANON else ""),
+    hide_scale = ANON and not SCALE
+    ax.set_ylabel("Tickets" + (" (scale removed)" if hide_scale else ""),
                   fontsize=10, color=DGRAY)
-    if ANON:
+    if hide_scale:
         ax.set_yticklabels([])
     ax.grid(axis="y", color=LGRAY, linewidth=0.7, zorder=0)
     ax.set_axisbelow(True)
@@ -335,8 +339,12 @@ def plot_bar_chart_event_axis(df):
              ha="left", va="top", fontsize=10, color=DGRAY)
 
     fig.tight_layout(rect=[0, 0, 1, 0.91])
-    out = ("forecast_2526_bar_chart_eventaxis_anon.png" if ANON
-           else "forecast_2526_bar_chart_eventaxis.png")
+    if ANON and SCALE:
+        out = "forecasting/forecast_2526_bar_chart_eventaxis_anon_scaled.png"
+    elif ANON:
+        out = "forecasting/forecast_2526_bar_chart_eventaxis_anon.png"
+    else:
+        out = "forecasting/forecast_2526_bar_chart_eventaxis.png"
     fig.savefig(out, dpi=180, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"  ✓ {out}")

@@ -21,7 +21,7 @@ Inputs:
     DonationsLatest.xlsx - Salesforce donation export
 
 Output:
-    Donor_Classification.xlsx - one sheet per tranche, plus unmatched donor review sheet
+    donors/Donor_Classification.xlsx - one sheet per tranche, plus unmatched donor review sheet
 """
 
 import difflib
@@ -41,13 +41,13 @@ os.chdir(data_dir)
 
 patrons_file  = 'Patrons.csv'
 donor_file    = 'DonationsLatest.xlsx'
-output_file   = 'Donor_Classification.xlsx'
-anon_file     = 'Donor_Classification_Anon.xlsx'
-summary_file  = 'Donor_Classification_Summary.xlsx'
-anon_summary_file = 'Donor_Classification_Summary_Anon.xlsx'
-review_file        = 'DonorNameMatchReview.xlsx'
-campaign_file      = 'Donor_Campaign.xlsx'
-anon_campaign_file = 'Donor_Campaign_Anon.xlsx'
+output_file   = 'donors/Donor_Classification.xlsx'
+anon_file     = 'donors/Donor_Classification_Anon.xlsx'
+summary_file  = 'donors/Donor_Classification_Summary.xlsx'
+anon_summary_file = 'donors/Donor_Classification_Summary_Anon.xlsx'
+review_file        = 'donors/DonorNameMatchReview.xlsx'
+campaign_file      = 'donors/Donor_Campaign.xlsx'
+anon_campaign_file = 'donors/Donor_Campaign_Anon.xlsx'
 
 # Tranche thresholds — adjust here without touching logic below
 MAJOR_DONOR_LIFETIME   = 5000  # Lifetime significant-gift threshold for Major Patrons

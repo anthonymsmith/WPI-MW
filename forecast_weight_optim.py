@@ -310,7 +310,7 @@ def main():
          for w, ws in results[:50]]
     ).sort_values('WAPE')
 
-    output_file = "Forecast_Weight_Optimization.xlsx"
+    output_file = "forecasting/Forecast_Weight_Optimization.xlsx"
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         results_df.to_excel(writer, sheet_name="Top50_GridSearch", index=False)
 

@@ -33,7 +33,7 @@ def main():
     row["EventCapacity"] = pd.to_numeric(row["EventCapacity"], errors="coerce")
 
     # Actual from completed data
-    comp = pd.read_excel("Forecast_2526_Comparison.xlsx",
+    comp = pd.read_excel("forecasting/Forecast_2526_Comparison.xlsx",
                          sheet_name="2526_Comparison")
     actual = int(comp.loc[comp["EventName"] == EVENT, "Actual"].iloc[0])
 

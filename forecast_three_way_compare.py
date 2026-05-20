@@ -66,8 +66,8 @@ DGRAY  = "#5A6A7A"
 def load_all():
     gg = pd.DataFrame(GG_DATA, columns=["EventName"] + GG_COLUMNS)
 
-    comp = pd.read_excel("Forecast_2526_FullSeason.xlsx",
-                          sheet_name="FullSeason")
+    comp = pd.read_excel("forecasting/Forecast_2526_FullSeason.xlsx",
+                          sheet_name="Detail")
     comp = comp[["EventName", "Actual", "Pred_Adj"]].rename(
         columns={"Pred_Adj": "Model"})
 
@@ -111,7 +111,7 @@ def leaderboard(df):
     return lb, done
 
 
-def plot_leaderboard(lb, out="forecast_three_way_leaderboard.png"):
+def plot_leaderboard(lb, out="forecasting/forecast_three_way_leaderboard.png"):
     fig, ax = plt.subplots(figsize=(10.5, 5.6))
     order = lb.sort_values("WAPE", ascending=False)
 
