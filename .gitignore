@@ -2,6 +2,7 @@
 *.csv
 !regions_computed.csv
 *.xlsx
+!EventManifest.xlsx
 *.xls
 *.xlsm
 *.pdf
