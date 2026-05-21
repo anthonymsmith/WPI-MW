@@ -24,7 +24,7 @@ os.chdir("/Users/antho/Documents/WPI-MW")
 
 from forecast_2526_comparison import (
     load_data, get_training_df, build_hierarchy_models,
-    predict_model_a, cap_at_capacity, build_pwyw_lift,
+    predict_model_a, cap_at_capacity, build_pwyw_lift, build_side_lift,
     INCLUDE_COMPS,
 )
 from forecast_artist_adjustment import apply_artist_adjustment
@@ -282,6 +282,10 @@ def main():
     pwyw_lift, _ = build_pwyw_lift(
         merged, prior, repeat_model, primary_sf, sf_ratio,
         primary, f1, f2, f3, f3a, f3b, f4, f5)
+    side_lift, side_samples = build_side_lift(
+        merged, prior, repeat_model, primary_sf, sf_ratio,
+        primary, f1, f2, f3, f3a, f3b, f4, f5)
+    print(f"Side-event lift: {side_lift:.2f}x  (n={len(side_samples)} prior-season Side events)")
 
     # All 25-26 live events from manifest
     em["EventDate"] = pd.to_datetime(em["EventDate"], errors="coerce")
@@ -318,7 +322,8 @@ def main():
 
     # Predict
     fc = predict_model_a(season, repeat_model, primary_sf, sf_ratio,
-                         primary, f1, f2, f3, f3a, f3b, f4, f5, pwyw_lift=pwyw_lift)
+                         primary, f1, f2, f3, f3a, f3b, f4, f5,
+                         pwyw_lift=pwyw_lift, side_lift=side_lift)
     fc["Pred_A"] = cap_at_capacity(fc["Pred_A"], fc["EventCapacity"])
 
     # Artist adjustment needs training-season labelled history

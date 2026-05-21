@@ -199,6 +199,60 @@ def build_pwyw_lift(merged, training_seasons, repeat_model, primary_sf, sf_ratio
     return lift, valid[['EventName', 'Actual', 'Pred_A', 'Ratio']]
 
 
+def build_side_lift(merged, training_seasons, repeat_model, primary_sf, sf_ratio,
+                    primary, f1, f2, f3, f3a, f3b, f4, f5):
+    """Multiplicative lift for festival side events (FestivalRole=='Side').
+
+    Festival programming is supply-constrained: high-draw evening slots go to
+    headliners, side events (cantatas, organ, daytime keyboards) are
+    mission-driven lower-draw. The bucket hierarchy doesn't know this, so a
+    side-event tag systematically over-forecasts.
+
+    Geometric mean of (actual / paid-bucket-pred) across completed Side events
+    in training_seasons, Bayesian-shrunk toward 1.0 with K=3. No floor — Side
+    events are expected to draw less than their bucket prior would predict.
+    """
+    if 'FestivalRole' not in merged.columns:
+        return 1.0, pd.DataFrame()
+    side = merged[
+        (merged['Season'].isin(training_seasons)) &
+        (merged['EventType'] == 'Live') &
+        (merged['EventStatus'] == 'Complete') &
+        (merged['TicketStatus'] == 'Active') &
+        (merged['FestivalRole'].astype(str).str.strip() == 'Side') &
+        (merged['Quantity'] > 0 if INCLUDE_COMPS else merged['TicketTotal'] > 0)
+    ]
+    if side.empty:
+        return 1.0, pd.DataFrame()
+    gb = ['EventId', 'EventName', 'EventClass', 'EventVenue',
+          'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat']
+    if 'SeatFormat' in side.columns:
+        gb.append('SeatFormat')
+    if 'VenueType' in side.columns:
+        gb.append('VenueType')
+    side_events = (
+        side.groupby(gb, group_keys=False, dropna=False)
+        .agg(Actual=('Quantity', 'sum'),
+             EventCapacity=('EventCapacity', 'max'))
+        .reset_index()
+    )
+    # Predict WITHOUT side lift (lift=1.0) to get the bucket-prior denominator.
+    fc = predict_model_a(side_events, repeat_model, primary_sf, sf_ratio,
+                         primary, f1, f2, f3, f3a, f3b, f4, f5)
+    valid = fc[(fc['Pred_A'] > 0) & fc['Actual'].notna()].copy()
+    if valid.empty:
+        return 1.0, valid
+    valid['Ratio'] = valid['Actual'] / valid['Pred_A']
+    lift_empirical = float(np.exp(np.log(valid['Ratio']).mean()))
+    # Bayesian shrinkage toward 1.0 (no lift) with K=3 — matches PWYW pattern.
+    # Side events are heterogeneous (some over, some under bucket prior), so
+    # we shrink toward the no-adjustment baseline to limit damage on outliers.
+    K = 3.0
+    n = len(valid)
+    lift = (n * lift_empirical + K * 1.0) / (n + K)
+    return lift, valid[['EventName', 'Actual', 'Pred_A', 'Ratio']]
+
+
 def build_hierarchy_models(filtered):
     """Hierarchy: EventRepeat (if tagged) → Primary_SF (if tagged, n≥MIN_SEATFORMAT_OBS)
        → (Class,Venue,LoB,SubGenre) × SeatFormatRatio (when thinly tagged)
@@ -442,7 +496,8 @@ def build_name_model(filtered):
 
 
 def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
-                    primary, f1, f2, f3, f3a, f3b, f4, f5=None, pwyw_lift=1.0):
+                    primary, f1, f2, f3, f3a, f3b, f4, f5=None,
+                    pwyw_lift=1.0, side_lift=1.0):
     fc = events_df.copy()
     for col in ['EventClass', 'EventVenue', 'EventGenre', 'EventLoB', 'EventSubGenre']:
         fc[col] = fc[col].astype(str).str.strip()
@@ -550,6 +605,16 @@ def predict_model_a(events_df, repeat_model, primary_sf, sf_ratio,
         fc.loc[is_pwyw, 'FallbackLevel'] = (
             fc.loc[is_pwyw, 'FallbackLevel'] + f' × PWYW lift {pwyw_lift:.2f}'
         )
+
+    # Side-event lift — festival side slots (cantatas, organ, daytime keyboards)
+    # systematically draw below their bucket prior. Calibrated from prior-season
+    # FestivalRole='Side' residuals, shrunk toward 1.0 with K=3.
+    if 'FestivalRole' in fc.columns and side_lift != 1.0:
+        is_side = fc['FestivalRole'].astype(str).str.strip() == 'Side'
+        fc.loc[is_side, 'Pred_A'] = fc.loc[is_side, 'Pred_A'] * side_lift
+        fc.loc[is_side, 'FallbackLevel'] = (
+            fc.loc[is_side, 'FallbackLevel'] + f' × Side lift {side_lift:.2f}'
+        )
     return fc
 
 
@@ -604,10 +669,17 @@ def main():
     if len(pwyw_samples):
         print(pwyw_samples.to_string(index=False))
 
+    side_lift, side_samples = build_side_lift(
+        merged, all_prior, repeat_model, primary_sf, sf_ratio,
+        primary, f1, f2, f3, f3a, f3b, f4, f5)
+    print(f"\nSide-event lift: {side_lift:.2f}x  (calibrated on n={len(side_samples)} prior-season Side events)")
+    if len(side_samples):
+        print(side_samples.to_string(index=False))
+
     # Get 25-26 completed events with actuals
     actuals_gb = ['EventId', 'EventName', 'EventClass', 'EventVenue',
                   'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat']
-    for c in ('SeatFormat', 'Pricing', 'VenueType'):
+    for c in ('SeatFormat', 'Pricing', 'VenueType', 'FestivalRole'):
         if c in merged.columns:
             actuals_gb.append(c)
     actuals_2526 = (
@@ -630,7 +702,8 @@ def main():
 
     # Generate predictions
     fc = predict_model_a(actuals_2526, repeat_model, primary_sf, sf_ratio,
-                         primary, f1, f2, f3, f3a, f3b, f4, f5, pwyw_lift=pwyw_lift)
+                         primary, f1, f2, f3, f3a, f3b, f4, f5,
+                         pwyw_lift=pwyw_lift, side_lift=side_lift)
     fc = predict_model_b(fc, name_model)
     fc['Pred_A'] = cap_at_capacity(fc['Pred_A'], fc['EventCapacity'])
     fc['Pred_B'] = cap_at_capacity(fc['Pred_B'], fc['EventCapacity'])
@@ -639,7 +712,7 @@ def main():
     # Event-level actuals from training seasons
     hist_gb = ['EventId', 'EventName', 'EventClass', 'EventVenue',
                'EventGenre', 'EventLoB', 'EventSubGenre', 'EventRepeat']
-    for c in ('SeatFormat', 'Pricing', 'VenueType'):
+    for c in ('SeatFormat', 'Pricing', 'VenueType', 'FestivalRole'):
         if c in filtered_train.columns:
             hist_gb.append(c)
     hist_actuals = (
