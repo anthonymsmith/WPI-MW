@@ -13,6 +13,7 @@
 *.log
 *.png
 *.bak
+*.bak.*
 
 # Temp / OS
 ~$*
