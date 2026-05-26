@@ -21,7 +21,9 @@ Inputs:
     DonationsLatest.xlsx - Salesforce donation export
 
 Output:
-    donors/Donor_Classification.xlsx - one sheet per tranche, plus unmatched donor review sheet
+    donors/Donor_Classification.xlsx - searchable 'All Tranches' sheet (Tranche column),
+                                       followed by one sheet per tranche, plus a
+                                       separate unmatched-donor review sheet
 """
 
 import difflib
@@ -521,7 +523,7 @@ def _write_sheet(writer, data, sheet_name, currency_cols=None, date_cols=None):
     for col_num, col_name in enumerate(out.columns):
         ws.write(0, col_num, col_name, header_fmt)
 
-    _auto_size = {'Account Name', 'First Donation Date', 'Last Donation Date'}
+    _auto_size = {'Tranche', 'Account Name', 'First Donation Date', 'Last Donation Date'}
     for i, col in enumerate(out.columns):
         if col in _auto_size:
             col_width = max(out[col].astype(str).map(len).max(), len(col)) + 2
@@ -1013,19 +1015,34 @@ def _write_summary(writer, drop_pii=False):
 _DATE_FMT = {'datetime_format': 'mm/dd/yyyy', 'date_format': 'mm/dd/yyyy'}
 
 def _write_tranches(writer, drop_pii=False):
-    """Write all tranche sheets to an ExcelWriter. If drop_pii, omit PII columns."""
+    """Write a combined 'All Tranches' sheet with a leading Tranche column,
+    followed by one sheet per tranche, plus (when PII allowed) a separate
+    Donors - No Attendance Match sheet."""
     def prep(frame):
         out = _prepare(frame)
         if drop_pii:
             out = out.drop(columns=[c for c in PII_COLS if c in out.columns])
         return out
 
-    _write_sheet(writer, prep(major_donors),    'Major Patrons')
-    _write_sheet(writer, prep(growth_prospects),'Growth Prospects')
-    _write_sheet(writer, prep(active_donors),   'Active Donors - Renew')
-    _write_sheet(writer, prep(dormant_donors),  'Dormant Donors - Reactivate')
-    _write_sheet(writer, prep(prime_prospects), 'Prime Non-Donor Prospects')
-    _write_sheet(writer, prep(lapsed_donors),   'Lapsed Donors - Review')
+    tranches = [
+        (prep(major_donors),     'Major Patrons'),
+        (prep(growth_prospects), 'Growth Prospects'),
+        (prep(active_donors),    'Active Donors - Renew'),
+        (prep(dormant_donors),   'Dormant Donors - Reactivate'),
+        (prep(prime_prospects),  'Prime Non-Donor Prospects'),
+        (prep(lapsed_donors),    'Lapsed Donors - Review'),
+    ]
+
+    combined = pd.concat(
+        [df.assign(Tranche=name) for df, name in tranches],
+        ignore_index=True,
+    )
+    combined = combined[['Tranche'] + [c for c in combined.columns if c != 'Tranche']]
+    _write_sheet(writer, combined, 'All Tranches')
+
+    for df, name in tranches:
+        _write_sheet(writer, df, name)
+
     if not drop_pii:
         _write_sheet(writer,
                      unmatched_donors.rename(columns={
